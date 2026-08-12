@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0 — 2026-08-12
+
+- Added channel allocation management and origin-bound buyer access sessions.
+- Added channel-aware hold and booking controls, including explicit privileged override reasons.
+- Added paginated booking lifecycle reads and encoded booking retrieval.
+- Booking and cancellation calls now reject missing or blank stable booking references.
+- Expanded the README with private-sale guidance and direct links across the SeatLayer SDK family.
+
 ## v0.1.0 — unreleased
 
 First release of the SeatLayer Go server SDK.

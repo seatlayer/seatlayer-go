@@ -50,6 +50,7 @@ var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 // holds no mutable state of its own.
 type Client struct {
 	Charts     *ChartsService
+	Channels   *ChannelsService
 	Events     *EventsService
 	Inventory  *InventoryService
 	Sessions   *SessionsService
@@ -120,6 +121,7 @@ func New(secretKey string, options ...Option) (*Client, error) {
 	}
 
 	client.Charts = &ChartsService{client: client}
+	client.Channels = &ChannelsService{client: client}
 	client.Events = &EventsService{client: client}
 	client.Inventory = &InventoryService{client: client}
 	client.Sessions = &SessionsService{client: client}
@@ -352,7 +354,7 @@ func newIdempotencyKey() string {
 
 // escape percent-encodes a path segment, including slashes.
 func escape(segment string) string {
-	return url.PathEscape(strings.ReplaceAll(segment, "/", "%2F"))
+	return url.PathEscape(segment)
 }
 
 // params builds a request body, dropping nil values so optional fields stay
@@ -369,4 +371,11 @@ func params(pairs ...any) map[string]any {
 		}
 	}
 	return out
+}
+
+func boolOrNil(value bool) any {
+	if !value {
+		return nil
+	}
+	return value
 }

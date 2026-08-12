@@ -14,11 +14,12 @@ import (
 
 // recorded captures one request the SDK made.
 type recorded struct {
-	method string
-	path   string
-	query  string
-	header http.Header
-	body   string
+	method      string
+	path        string
+	escapedPath string
+	query       string
+	header      http.Header
+	body        string
 }
 
 type stub struct {
@@ -37,7 +38,7 @@ func newTestClient(t *testing.T, responses []stub, options ...Option) (*Client, 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		*calls = append(*calls, recorded{
-			method: r.Method, path: r.URL.Path, query: r.URL.RawQuery,
+			method: r.Method, path: r.URL.Path, escapedPath: r.URL.EscapedPath(), query: r.URL.RawQuery,
 			header: r.Header.Clone(), body: string(body),
 		})
 		if index >= len(responses) {
@@ -125,8 +126,8 @@ func TestEscapesPathParameters(t *testing.T) {
 	_, _ = client.Events.Retrieve(context.Background(), "ev/../admin")
 
 	// The server must see one segment, not a traversal.
-	if got := call(t, calls, 0).path; got != "/v1/events/ev/../admin" && !strings.Contains(got, "%2F") {
-		t.Fatalf("path not escaped: %q", got)
+	if got := call(t, calls, 0).escapedPath; got != "/v1/events/ev%2F..%2Fadmin" {
+		t.Fatalf("escaped path = %q", got)
 	}
 }
 
@@ -464,6 +465,68 @@ func TestExtendHold(t *testing.T) {
 	_ = json.Unmarshal([]byte(call(t, calls, 0).body), &body)
 	if body["holdId"] != "h_9" || body["ttlMs"] != float64(600000) {
 		t.Fatalf("body = %v", body)
+	}
+}
+
+func TestHoldCarriesChannelAuthority(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 200, body: `{"holdId":"h_1"}`}})
+	_, _ = client.Inventory.Hold(context.Background(), "ev_1", HoldParams{
+		Labels:                    []string{"A-1"},
+		ChannelIDs:                []string{"ch_partner"},
+		IgnoreChannelRestrictions: true,
+		Reason:                    "partner checkout",
+		IdempotencyKey:            "partner-order-42",
+	})
+
+	var body map[string]any
+	_ = json.Unmarshal([]byte(call(t, calls, 0).body), &body)
+	channels := body["channelIds"].([]any)
+	if len(channels) != 1 || channels[0] != "ch_partner" || body["reason"] != "partner checkout" {
+		t.Fatalf("body = %v", body)
+	}
+	if body["ignoreChannelRestrictions"] != true {
+		t.Fatalf("override = %v", body["ignoreChannelRestrictions"])
+	}
+}
+
+func TestCreatesOriginBoundBuyerAccessSession(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 201, body: `{"token":"bas_x"}`}})
+	_, _ = client.Channels.CreateBuyerAccessSession(context.Background(), "ev/1", BuyerAccessSessionParams{
+		ChannelIDs:     []string{"ch_1"},
+		IncludePublic:  false,
+		AllowedOrigin:  "https://partner.example",
+		MaxQuantity:    4,
+		IdempotencyKey: "partner-order-42",
+	})
+
+	request := call(t, calls, 0)
+	if request.escapedPath != "/v1/events/ev%2F1/buyer-access-sessions" {
+		t.Fatalf("escaped path = %q", request.escapedPath)
+	}
+	if request.header.Get("Idempotency-Key") != "partner-order-42" {
+		t.Fatalf("idempotency key = %q", request.header.Get("Idempotency-Key"))
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(request.body), &body)
+	if body["includePublic"] != false || body["allowedOrigin"] != "https://partner.example" {
+		t.Fatalf("body = %v", body)
+	}
+}
+
+func TestRetrieveBookingTrimsAndEncodesReference(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 200, body: `{"bookingRef":"order / 42"}`}})
+	_, _ = client.Inventory.RetrieveBooking(context.Background(), "ev_1", "  order / 42  ")
+
+	if got := call(t, calls, 0).escapedPath; got != "/v1/events/ev_1/bookings/order%20%2F%2042" {
+		t.Fatalf("path = %q", got)
+	}
+}
+
+func TestUnbookRejectsBlankBookingReference(t *testing.T) {
+	client, _ := newTestClient(t, nil)
+	_, err := client.Inventory.Unbook(context.Background(), "ev_1", []string{"A-1"}, "   ")
+	if err == nil || !strings.Contains(err.Error(), "BookingRef is required") {
+		t.Fatalf("want a booking-ref error, got %v", err)
 	}
 }
 

@@ -3,6 +3,9 @@ package seatlayer
 import (
 	"context"
 	"errors"
+	"net/url"
+	"strconv"
+	"strings"
 )
 
 // InventoryService covers holds, booking, blocking and availability.
@@ -30,6 +33,12 @@ type HoldParams struct {
 	TTLMs          int64
 	ReplaceHoldID  string
 	IdempotencyKey string
+	// ChannelIDs grants access to private allocation inventory.
+	ChannelIDs []string
+	// IgnoreChannelRestrictions is a privileged backend override.
+	IgnoreChannelRestrictions bool
+	// Reason is written to the audit trail for channel use or an override.
+	Reason string
 }
 
 // Hold reserves the named objects.
@@ -39,6 +48,9 @@ func (s *InventoryService) Hold(ctx context.Context, eventKey string, p HoldPara
 		"selections", mapSliceOrNil(p.Selections),
 		"ttlMs", int64OrNil(p.TTLMs),
 		"replaceHoldId", stringOrNil(p.ReplaceHoldID),
+		"channelIds", sliceOrNil(p.ChannelIDs),
+		"ignoreChannelRestrictions", boolOrNil(p.IgnoreChannelRestrictions),
+		"reason", stringOrNil(p.Reason),
 	)
 	return s.client.post(ctx, s.path(eventKey, "/hold"), body, p.IdempotencyKey)
 }
@@ -54,6 +66,11 @@ type BestAvailableParams struct {
 	// BookingRef is required by BookBestAvailable and ignored by HoldBestAvailable.
 	BookingRef     string
 	IdempotencyKey string
+	ChannelIDs     []string
+	// IgnoreChannelRestrictions is a privileged backend override.
+	IgnoreChannelRestrictions bool
+	// Reason is written to the audit trail for channel use or an override.
+	Reason string
 }
 
 // HoldBestAvailable picks the best free objects and holds them.
@@ -68,6 +85,9 @@ func (s *InventoryService) HoldBestAvailable(
 		"categoryKey", stringOrNil(p.CategoryKey),
 		"zoneId", stringOrNil(p.ZoneID),
 		"ttlMs", int64OrNil(p.TTLMs),
+		"channelIds", sliceOrNil(p.ChannelIDs),
+		"ignoreChannelRestrictions", boolOrNil(p.IgnoreChannelRestrictions),
+		"reason", stringOrNil(p.Reason),
 	)
 	return s.client.post(ctx, s.path(eventKey, "/best-available"), body, p.IdempotencyKey)
 }
@@ -79,16 +99,20 @@ func (s *InventoryService) HoldBestAvailable(
 func (s *InventoryService) BookBestAvailable(
 	ctx context.Context, eventKey string, p BestAvailableParams,
 ) (map[string]any, error) {
-	if p.BookingRef == "" {
+	bookingRef, err := normalizeBookingRef(p.BookingRef)
+	if err != nil {
 		// Required so the sale can be reconciled against your own order — caught
 		// here rather than as a 400 after a round-trip.
 		return nil, errors.New("seatlayer: BookingRef is required for BookBestAvailable")
 	}
 	body := params(
 		"qty", p.Qty,
-		"bookingRef", p.BookingRef,
+		"bookingRef", bookingRef,
 		"categoryKey", stringOrNil(p.CategoryKey),
 		"zoneId", stringOrNil(p.ZoneID),
+		"channelIds", sliceOrNil(p.ChannelIDs),
+		"ignoreChannelRestrictions", boolOrNil(p.IgnoreChannelRestrictions),
+		"reason", stringOrNil(p.Reason),
 	)
 	return s.client.post(ctx, s.path(eventKey, "/best-available-book"), body, p.IdempotencyKey)
 }
@@ -128,14 +152,26 @@ type BookParams struct {
 	Labels         []string
 	BookingRef     string
 	IdempotencyKey string
+	ChannelIDs     []string
+	// IgnoreChannelRestrictions is a privileged backend override.
+	IgnoreChannelRestrictions bool
+	// Reason is written to the audit trail for channel use or an override.
+	Reason string
 }
 
 // Book confirms a sale.
 func (s *InventoryService) Book(ctx context.Context, eventKey string, p BookParams) (map[string]any, error) {
+	bookingRef, err := normalizeBookingRef(p.BookingRef)
+	if err != nil {
+		return nil, err
+	}
 	body := params(
 		"holdId", stringOrNil(p.HoldID),
 		"labels", sliceOrNil(p.Labels),
-		"bookingRef", stringOrNil(p.BookingRef),
+		"bookingRef", bookingRef,
+		"channelIds", sliceOrNil(p.ChannelIDs),
+		"ignoreChannelRestrictions", boolOrNil(p.IgnoreChannelRestrictions),
+		"reason", stringOrNil(p.Reason),
 	)
 	return s.client.post(ctx, s.path(eventKey, "/book"), body, p.IdempotencyKey)
 }
@@ -144,13 +180,24 @@ func (s *InventoryService) Book(ctx context.Context, eventKey string, p BookPara
 func (s *InventoryService) BoxOfficeBook(
 	ctx context.Context, eventKey string, labels []string, bookingRef string,
 ) (map[string]any, error) {
+	ref, err := normalizeBookingRef(bookingRef)
+	if err != nil {
+		return nil, err
+	}
 	return s.client.post(ctx, s.path(eventKey, "/box-book"),
-		params("labels", labels, "bookingRef", bookingRef), "")
+		params("labels", labels, "bookingRef", ref), "")
 }
 
 // Unbook reverses a booking. Requires a key with cancel authority.
-func (s *InventoryService) Unbook(ctx context.Context, eventKey string, labels []string) (map[string]any, error) {
-	return s.client.post(ctx, s.path(eventKey, "/unbook"), params("labels", labels), "")
+func (s *InventoryService) Unbook(
+	ctx context.Context, eventKey string, labels []string, bookingRef string,
+) (map[string]any, error) {
+	ref, err := normalizeBookingRef(bookingRef)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.post(ctx, s.path(eventKey, "/unbook"),
+		params("labels", labels, "bookingRef", ref), "")
 }
 
 // Block holds inventory back from sale (house seats, production holds).
@@ -178,6 +225,53 @@ func (s *InventoryService) UpdateAvailability(
 	ctx context.Context, eventKey string, fields map[string]any,
 ) (map[string]any, error) {
 	return s.client.post(ctx, s.path(eventKey, "/availability"), fields, "")
+}
+
+// BookingListParams filters and pages booking lifecycle records.
+type BookingListParams struct {
+	Query  string
+	State  string
+	Limit  int
+	Cursor string
+}
+
+// ListBookings returns one page of booking lifecycle records, newest first.
+func (s *InventoryService) ListBookings(
+	ctx context.Context, eventKey string, p BookingListParams,
+) (map[string]any, error) {
+	query := url.Values{}
+	if p.Query != "" {
+		query.Set("q", p.Query)
+	}
+	if p.State != "" {
+		query.Set("state", p.State)
+	}
+	if p.Limit != 0 {
+		query.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Cursor != "" {
+		query.Set("cursor", p.Cursor)
+	}
+	return s.client.get(ctx, s.path(eventKey, "/bookings"), query)
+}
+
+// RetrieveBooking returns a booking lifecycle by its stable reference.
+func (s *InventoryService) RetrieveBooking(
+	ctx context.Context, eventKey, bookingRef string,
+) (map[string]any, error) {
+	ref, err := normalizeBookingRef(bookingRef)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.get(ctx, s.path(eventKey, "/bookings/"+escape(ref)), nil)
+}
+
+func normalizeBookingRef(value string) (string, error) {
+	ref := strings.TrimSpace(value)
+	if ref == "" {
+		return "", errors.New("seatlayer: BookingRef is required and must be a non-empty stable reference")
+	}
+	return ref, nil
 }
 
 func mapSliceOrNil(value []map[string]any) any {

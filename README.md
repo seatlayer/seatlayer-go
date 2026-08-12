@@ -1,5 +1,9 @@
 # SeatLayer Go SDK
 
+[![CI](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml/badge.svg)](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/seatlayer/seatlayer-go.svg)](https://pkg.go.dev/github.com/seatlayer/seatlayer-go)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111827.svg)](LICENSE)
+
 Official Go server SDK for the [SeatLayer](https://seatlayer.io) reserved-seating API.
 
 > **Server-side only.** This package authenticates with your secret key. Never embed it in

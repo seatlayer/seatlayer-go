@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **Security/reliability:** Mutations now default to a single attempt. Automatic header-replay
+  retries are limited to chart create/copy, event create, and workspace create, preventing
+  transient failures from duplicating holds or best-available results and from issuing extra
+  show-once credentials.
+- Aligned event, inventory, webhook, manage-session, and Designer requests with the generated
+  public contract. Named Go response types now preserve the webhook `subs`/`sub`, Designer
+  `session`, and hold-inspection shapes; event chart acknowledgement, hold-TTL reset, scheduled
+  blocks, trusted hold extension, and delivery filters are available.
+- Removed unsupported buyer-access-session `State` and `Cursor` fields; that listing accepts only
+  `Limit`.
+- Added deterministic transport-contract coverage for stable error-code fallback, HTTP status,
+  decoded body and `X-Request-ID` exposure, typed 429 `Retry-After` precedence, non-JSON gateway
+  failures, and single-attempt unsafe mutations.
+- Reached all 71 public operation wrappers with raw event-poster upload/removal and typed hosted
+  access-link create/list/rotate/revoke results. One-time capability reveals stay single-attempt.
+- Added exact chart copy/metadata params, typed event-log pagination, and explicit-null helpers for
+  buyer sessions, channel archive destinations, and workspace creation.
+
 ## v0.2.0 — 2026-08-12
 
 - Added channel allocation management and origin-bound buyer access sessions.

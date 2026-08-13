@@ -2,6 +2,7 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"net/url"
 	"strconv"
@@ -83,7 +84,7 @@ func (s *ChartsService) Create(ctx context.Context, p ChartCreateParams) (map[st
 		"externalRef", stringOrNil(p.ExternalRef),
 		"workspaceId", stringOrNil(p.WorkspaceID),
 	)
-	return s.client.post(ctx, "/v1/charts", body, p.IdempotencyKey)
+	return s.client.postHeaderReplay(ctx, "/v1/charts", body, p.IdempotencyKey)
 }
 
 // Retrieve fetches a chart and its document.
@@ -91,20 +92,34 @@ func (s *ChartsService) Retrieve(ctx context.Context, chartID string) (map[strin
 	return s.client.get(ctx, "/v1/charts/"+escape(chartID), nil)
 }
 
-// Update replaces a chart document.
-//
-// expectedUpdatedAt is required for optimistic concurrency and is not optional
-// here either: without it two concurrent writers silently overwrite each other,
-// and a seat map is exactly the document where that loses work. Read it from
-// Retrieve immediately before writing.
-//
-// The Designer is the authoring surface. Use this for bulk programmatic edits
-// and migrations, not for drawing.
+// ChartUpdateParams supports both the optimistic document-replacement branch
+// and the metadata-only branch of the chart update contract.
+type ChartUpdateParams struct {
+	Doc               map[string]any
+	ExpectedUpdatedAt int64
+	Name              string
+	Issues            *float64
+	ExternalRef       NullableField[string]
+}
+
+// Update changes a document and/or chart metadata. ExpectedUpdatedAt is
+// required whenever Doc is supplied so concurrent writers cannot silently
+// overwrite each other. ExternalRef can be FieldNull[string]() to clear it.
 func (s *ChartsService) Update(
-	ctx context.Context, chartID string, doc map[string]any, expectedUpdatedAt int64,
+	ctx context.Context, chartID string, p ChartUpdateParams,
 ) (map[string]any, error) {
-	return s.client.put(ctx, "/v1/charts/"+escape(chartID),
-		params("doc", doc, "expectedUpdatedAt", expectedUpdatedAt))
+	body := params(
+		"name", stringOrNil(p.Name),
+		"issues", p.Issues,
+	)
+	if p.Doc != nil {
+		body["doc"] = p.Doc
+		body["expectedUpdatedAt"] = p.ExpectedUpdatedAt
+	}
+	if value, present := p.ExternalRef.requestValue(); present {
+		body["externalRef"] = value
+	}
+	return s.client.put(ctx, "/v1/charts/"+escape(chartID), body)
 }
 
 // Delete removes a chart.
@@ -113,9 +128,39 @@ func (s *ChartsService) Delete(ctx context.Context, chartID string) error {
 	return err
 }
 
+// ChartCopyParams overrides fields inherited from the source chart.
+type ChartCopyParams struct {
+	Name           string
+	ExternalRef    NullableField[string]
+	WorkspaceID    string
+	IdempotencyKey string
+}
+
 // Copy duplicates a chart — the usual way to provision a venue from a template.
-func (s *ChartsService) Copy(ctx context.Context, chartID string) (map[string]any, error) {
-	return s.client.post(ctx, "/v1/charts/"+escape(chartID)+"/duplicate", nil, "")
+func (s *ChartsService) Copy(
+	ctx context.Context, chartID string, options ...ChartCopyParams,
+) (map[string]any, error) {
+	if len(options) > 1 {
+		return nil, errors.New("seatlayer: Copy accepts at most one params value")
+	}
+	var body map[string]any
+	var idempotencyKey string
+	if len(options) == 1 {
+		p := options[0]
+		body = params(
+			"name", stringOrNil(p.Name),
+			"workspaceId", stringOrNil(p.WorkspaceID),
+		)
+		if value, present := p.ExternalRef.requestValue(); present {
+			body["externalRef"] = value
+		}
+		if len(body) == 0 {
+			body = nil
+		}
+		idempotencyKey = p.IdempotencyKey
+	}
+	return s.client.postHeaderReplay(ctx, "/v1/charts/"+escape(chartID)+"/duplicate",
+		body, idempotencyKey)
 }
 
 // Archive moves a chart to the archive.

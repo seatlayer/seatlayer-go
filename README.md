@@ -67,6 +67,10 @@ _, err = client.Inventory.Book(ctx, eventKey, seatlayer.BookParams{
 })
 ```
 
+For nullable event-create fields, ordinary scalar fields cover the common value-or-omit case. Use
+the `Nullable` overlay when the wire call must contain an explicit JSON null, for example
+`Nullable: seatlayer.EventCreateNullableFields{Venue: seatlayer.FieldNull[string]()}`.
+
 Every method takes a `context.Context`. Cancelling it stops retries immediately rather than being
 treated as a transient fault to back off through.
 
@@ -95,7 +99,7 @@ books. Never price from what the browser sent you — `RetrieveHold` is authorit
 
 ```go
 hold, err := client.Inventory.RetrieveHold(ctx, eventKey, holdID)
-// … charge the total of hold["items"] in hold["currency"] …
+// … charge from hold.Items, whose UnitPrice and Currency are authoritative …
 _, err = client.Inventory.Book(ctx, eventKey, seatlayer.BookParams{
     HoldID: holdID, BookingRef: charge.ID,
 })
@@ -196,16 +200,28 @@ Your secret key never reaches a browser. Mint a scoped token instead.
 ```go
 session, err := client.Sessions.CreateManageSession(ctx, eventKey, seatlayer.ManageSessionParams{
     AllowedOrigin:    "https://box-office.yourplatform.com",
-    Capabilities:     []string{seatlayer.CapabilityView, seatlayer.CapabilityBlock},
+    Capabilities:     []seatlayer.ManageCapability{
+        seatlayer.CapabilityView,
+        seatlayer.CapabilityBlock,
+    },
     ExpiresInSeconds: 3600,
 })
 ```
 
-`Capabilities` is **required** by this SDK even though the API defaults it. That default grants all
-four including `event:cancel`, which reverses paid bookings — not something that should arrive by
-forgetting a field. Grant the smallest set the page needs.
+`Capabilities` is **required** by this SDK even though the raw API safely defaults an omitted list
+to view-only (`event:view`). Keeping the field required makes browser authority visible at every
+call site. Grant the smallest set the page needs. The constants also cover channel management and
+SeatLayer-managed orders, refunds, ticket delivery, door, and box-office capabilities.
+
+Designer minting returns a `DesignerSessionEnvelope`; the token and the effective safe-mode and
+feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mode: "safe"`.
 
 ## Webhooks
+
+Webhook methods expose the wire envelopes directly: `List` returns `WebhookList.Subs`, `Create`
+returns `WebhookCreateEnvelope` with the show-once `Secret`, and `Update` returns
+`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the eight accepted event names and
+`WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
 
 Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes — in Go
 specifically, `encoding/json` marshals map keys in sorted order while a real delivery arrives in
@@ -279,16 +295,21 @@ requests.
 
 ## Reliability
 
-**Retries.** 429, 408 and 5xx are retried with exponential backoff and full jitter; `Retry-After`
-wins when the server sends it. 4xx is never retried — it will not start succeeding.
+**Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
+`Retry-After` wins when the server sends it. Automatic mutation retries are limited to the four
+operations backed by exact response replay: `Charts.Create`, `Charts.Copy`, `Events.Create`, and
+`Workspaces.Create`. Other 4xx responses are never retried.
 
-**Idempotency.** Every mutating request carries an `Idempotency-Key`, generated if you do not supply
-one, and **reused across retries** so a retried booking cannot become two bookings. Pass your own
-order id for end-to-end deduplication:
+**Idempotency.** Those four replay-backed operations carry an `Idempotency-Key`, generated when you
+do not supply one and reused across attempts. Other mutations are single-attempt and receive no
+automatic key. A caller-supplied key is forwarded but does not enable retries. This includes
+inventory holds and bookings, show-once credential or secret creation, unsupported operations, and
+raw `Do` mutations. Keep `BookingRef` in the booking body for reconciliation, but handle an unknown
+network outcome explicitly instead of automatically repeating the sale.
 
 ```go
-client.Inventory.Book(ctx, eventKey, seatlayer.BookParams{
-    HoldID: holdID, IdempotencyKey: "order-" + orderID,
+client.Events.Create(ctx, seatlayer.EventCreateParams{
+    ChartID: chartID, IdempotencyKey: "provision-event-" + eventID,
 })
 ```
 
@@ -304,7 +325,8 @@ client, err := seatlayer.New(
 
 ## Escape hatch
 
-For surface this SDK does not wrap yet — same auth, retries, idempotency and error mapping:
+For surface this SDK does not wrap yet, `Do` keeps auth and error mapping. Raw reads retain the
+read retry policy; raw mutations are always single-attempt because their replay contract is unknown:
 
 ```go
 client.Do(ctx, http.MethodPost, "/v1/events/ev_1/some-new-route", nil, map[string]any{"qty": 2}, "")
@@ -315,8 +337,8 @@ client.Do(ctx, http.MethodPost, "/v1/events/ev_1/some-new-route", nil, map[strin
 | Service | Methods |
 | --- | --- |
 | `Charts` | `List` `All` `Create` `Retrieve` `Update` `Delete` `Copy` `Archive` `Unarchive` `Publish` |
-| `Events` | `List` `All` `Create` `Retrieve` `Update` `Delete` `UpdateChart` `Close` `Reopen` `Archive` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
-| `Channels` | `ListChannels` `CreateChannel` `UpdateChannel` `UpdateAssignments` `ListAllocation` `RetrieveAccessPreview` `RetrieveReport` `Pause` `Unpause` `Archive` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` |
+| `Events` | `List` `All` `Create` `Retrieve` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
+| `Channels` | `ListChannels` `CreateChannel` `UpdateChannel` `UpdateAssignments` `ListAllocation` `RetrieveAccessPreview` `RetrieveReport` `Pause` `Unpause` `Archive` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `CreateAccessLink` `ListAccessLinks` `RotateAccessLink` `RevokeAccessLink` |
 | `Inventory` | `Hold` `HoldBestAvailable` `BookBestAvailable` `ExtendHold` `RetrieveHold` `Release` `Book` `BoxOfficeBook` `Unbook` `Block` `Unblock` `UnblockAll` `RetrieveAvailability` `UpdateAvailability` `ListBookings` `RetrieveBooking` |
 | `Sessions` | `CreateManageSession` `RevokeManageSession` `CreateDesignerSession` `RevokeDesignerSession` |
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |

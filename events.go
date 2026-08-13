@@ -2,6 +2,7 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"net/url"
 	"strconv"
@@ -77,8 +78,19 @@ type EventCreateParams struct {
 	Venue       string
 	ExternalRef string
 	// Currency overrides the organisation currency for this event.
-	Currency       string
+	Currency    string
+	Description string
+	// EndsAt is epoch milliseconds.
+	EndsAt        int64
+	Timezone      string
+	Locale        string
+	PosterAssetID string
+	// Mode is normally inferred from the secret key; when supplied it must match.
+	Mode           string
 	IdempotencyKey string
+	// Nullable overrides convenience scalar fields when explicit JSON null is
+	// semantically different from omission.
+	Nullable EventCreateNullableFields
 }
 
 // Create makes an event from a published chart.
@@ -91,8 +103,15 @@ func (s *EventsService) Create(ctx context.Context, p EventCreateParams) (map[st
 		"venue", stringOrNil(p.Venue),
 		"externalRef", stringOrNil(p.ExternalRef),
 		"currency", stringOrNil(p.Currency),
+		"description", stringOrNil(p.Description),
+		"endsAt", int64OrNil(p.EndsAt),
+		"timezone", stringOrNil(p.Timezone),
+		"locale", stringOrNil(p.Locale),
+		"posterAssetId", stringOrNil(p.PosterAssetID),
+		"mode", stringOrNil(p.Mode),
 	)
-	return s.client.post(ctx, "/v1/events", body, p.IdempotencyKey)
+	p.Nullable.apply(body)
+	return s.client.postHeaderReplay(ctx, "/v1/events", body, p.IdempotencyKey)
 }
 
 // Retrieve fetches an event with live counts.
@@ -111,9 +130,51 @@ func (s *EventsService) Delete(ctx context.Context, eventKey string) error {
 	return err
 }
 
+// UpdatePoster uploads raw PNG, JPEG, or WebP bytes. Content type defaults to
+// application/octet-stream; pass one explicit media type when it is known.
+func (s *EventsService) UpdatePoster(
+	ctx context.Context, eventKey string, image []byte, contentType ...string,
+) (map[string]any, error) {
+	if len(contentType) > 1 {
+		return nil, errors.New("seatlayer: UpdatePoster accepts at most one content type")
+	}
+	mediaType := "application/octet-stream"
+	if len(contentType) == 1 && contentType[0] != "" {
+		mediaType = contentType[0]
+	}
+	return s.client.putRaw(ctx, "/v1/events/"+escape(eventKey)+"/poster", image, mediaType)
+}
+
+// DeletePoster removes the event poster used by share cards.
+func (s *EventsService) DeletePoster(
+	ctx context.Context, eventKey string,
+) (map[string]any, error) {
+	return s.client.delete(ctx, "/v1/events/"+escape(eventKey)+"/poster")
+}
+
+// EventChartUpdateParams acknowledges assignment changes caused by a new chart.
+type EventChartUpdateParams struct {
+	AcknowledgeDroppedAssignments *bool
+	Reason                        string
+}
+
 // UpdateChart moves a live event onto the latest published version of its chart.
-func (s *EventsService) UpdateChart(ctx context.Context, eventKey string) (map[string]any, error) {
-	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/update-chart", nil, "")
+// The optional params value preserves the original no-argument call shape.
+func (s *EventsService) UpdateChart(
+	ctx context.Context, eventKey string, options ...EventChartUpdateParams,
+) (map[string]any, error) {
+	if len(options) > 1 {
+		return nil, errors.New("seatlayer: UpdateChart accepts at most one params value")
+	}
+	p := EventChartUpdateParams{}
+	if len(options) == 1 {
+		p = options[0]
+	}
+	body := params(
+		"acknowledgeDroppedAssignments", p.AcknowledgeDroppedAssignments,
+		"reason", stringOrNil(p.Reason),
+	)
+	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/update-chart", body, "")
 }
 
 // Close stops buyer sales. Existing holds keep their TTL.
@@ -136,10 +197,20 @@ func (s *EventsService) RetrieveHoldTTL(ctx context.Context, eventKey string) (m
 	return s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/hold-ttl", nil)
 }
 
-// UpdateHoldTTL sets the checkout window, in milliseconds.
-func (s *EventsService) UpdateHoldTTL(ctx context.Context, eventKey string, holdTTLMs int64) (map[string]any, error) {
+// UpdateHoldTTL sets the checkout window in milliseconds. Omit holdTTLMs to
+// send JSON null and restore the event default.
+func (s *EventsService) UpdateHoldTTL(
+	ctx context.Context, eventKey string, holdTTLMs ...int64,
+) (map[string]any, error) {
+	if len(holdTTLMs) > 1 {
+		return nil, errors.New("seatlayer: UpdateHoldTTL accepts zero or one value")
+	}
+	var value any
+	if len(holdTTLMs) == 1 {
+		value = holdTTLMs[0]
+	}
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/hold-ttl",
-		params("holdTtlMs", holdTTLMs), "")
+		map[string]any{"holdTtlMs": value}, "")
 }
 
 // RetrieveReport fetches the event report.
@@ -147,9 +218,33 @@ func (s *EventsService) RetrieveReport(ctx context.Context, eventKey string) (ma
 	return s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/report", nil)
 }
 
-// RetrieveLog fetches the event audit log.
-func (s *EventsService) RetrieveLog(ctx context.Context, eventKey string) (map[string]any, error) {
-	return s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/log", nil)
+// EventLogListParams pages an event audit log newest first.
+type EventLogListParams struct {
+	Limit  int
+	Before int64
+}
+
+// RetrieveLog fetches one page of the event audit log.
+func (s *EventsService) RetrieveLog(
+	ctx context.Context, eventKey string, options ...EventLogListParams,
+) (EventLogPage, error) {
+	if len(options) > 1 {
+		return EventLogPage{}, errors.New("seatlayer: RetrieveLog accepts at most one params value")
+	}
+	query := url.Values{}
+	if len(options) == 1 {
+		if options[0].Limit != 0 {
+			query.Set("limit", strconv.Itoa(options[0].Limit))
+		}
+		if options[0].Before != 0 {
+			query.Set("before", strconv.FormatInt(options[0].Before, 10))
+		}
+	}
+	response, err := s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/log", query)
+	if err != nil {
+		return EventLogPage{}, err
+	}
+	return decodeResponse[EventLogPage](response)
 }
 
 func int64OrNil(value int64) any {

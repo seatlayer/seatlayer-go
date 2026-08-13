@@ -11,12 +11,23 @@ func (s *WorkspacesService) List(ctx context.Context) (map[string]any, error) {
 	return s.client.get(ctx, "/v1/workspaces", nil)
 }
 
-// Create provisions a workspace, typically one per tenant.
+// WorkspaceCreateParams preserves omitted, valued, and explicit-null external
+// references. Use FieldNull[string]() to request JSON null.
+type WorkspaceCreateParams struct {
+	Name           string
+	ExternalRef    NullableField[string]
+	IdempotencyKey string
+}
+
+// Create provisions a workspace with exact nullable wire semantics.
 func (s *WorkspacesService) Create(
-	ctx context.Context, name, externalRef, idempotencyKey string,
+	ctx context.Context, p WorkspaceCreateParams,
 ) (map[string]any, error) {
-	return s.client.post(ctx, "/v1/workspaces",
-		params("name", name, "externalRef", stringOrNil(externalRef)), idempotencyKey)
+	body := params("name", p.Name)
+	if value, present := p.ExternalRef.requestValue(); present {
+		body["externalRef"] = value
+	}
+	return s.client.postHeaderReplay(ctx, "/v1/workspaces", body, p.IdempotencyKey)
 }
 
 // Retrieve fetches one workspace.

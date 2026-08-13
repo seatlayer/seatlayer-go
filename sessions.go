@@ -11,45 +11,42 @@ import (
 // key never reaches a browser.
 type SessionsService struct{ client *Client }
 
-// Capabilities a manage-session token can carry.
-const (
-	CapabilityView    = "event:view"
-	CapabilityBlock   = "event:block"
-	CapabilityCancel  = "event:cancel"
-	CapabilityReports = "event:reports"
-)
-
 // ManageSessionParams scopes a control-room token.
 type ManageSessionParams struct {
 	// AllowedOrigin is the https origin the token is bound to.
 	AllowedOrigin string
 	// Capabilities is required. See CreateManageSession for why.
-	Capabilities []string
+	Capabilities []ManageCapability
 	// ExpiresInSeconds is 300–14400. Defaults to 3600 server-side.
 	ExpiresInSeconds int
+	// WorkspaceID optionally confirms the event belongs to this workspace.
+	WorkspaceID string
 }
 
 // CreateManageSession mints a manage-session token for the control room.
 //
-// Capabilities is required here even though the API defaults it. That default
-// grants all four — including event:cancel, which un-books paid inventory.
-// Granting the ability to reverse sales by forgetting a field is not a default
-// worth inheriting.
+// The raw API defaults an omitted list to view-only (event:view). This SDK
+// still requires an explicit set so browser authority remains visible at every
+// call site.
 func (s *SessionsService) CreateManageSession(
 	ctx context.Context, eventKey string, p ManageSessionParams,
-) (map[string]any, error) {
+) (ManageSession, error) {
 	if len(p.Capabilities) == 0 {
-		return nil, errors.New(
+		return ManageSession{}, errors.New(
 			"seatlayer: Capabilities is required: pass the smallest set the page needs, " +
-				"e.g. []string{seatlayer.CapabilityView}; omitting it server-side grants " +
-				"event:cancel, which can reverse paid bookings")
+				"e.g. []seatlayer.ManageCapability{seatlayer.CapabilityView}")
 	}
 	body := params(
 		"allowedOrigin", p.AllowedOrigin,
 		"capabilities", p.Capabilities,
 		"expiresInSeconds", intOrNil(p.ExpiresInSeconds),
+		"workspaceId", stringOrNil(p.WorkspaceID),
 	)
-	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/manage-sessions", body, "")
+	response, err := s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/manage-sessions", body, "")
+	if err != nil {
+		return ManageSession{}, err
+	}
+	return decodeResponse[ManageSession](response)
 }
 
 // RevokeManageSession invalidates a manage token before it expires.
@@ -66,8 +63,15 @@ type DesignerSessionParams struct {
 	AllowedOrigin string
 	// Authority is "read-only", "edit", or "publish".
 	Authority string
+	// CanPublish is the legacy authority flag; when supplied it must agree with
+	// Authority. A pointer preserves an explicit false value.
+	CanPublish *bool
 	// Mode is "normal" or "safe".
-	Mode             string
+	Mode string
+	// SafeModeOptions is accepted only when Mode is "safe".
+	SafeModeOptions *DesignerSafeModeOptionsParams
+	// Features carries the Designer feature-policy object.
+	Features         map[string]any
 	ExpiresInSeconds int
 }
 
@@ -75,16 +79,23 @@ type DesignerSessionParams struct {
 // your own UI.
 func (s *SessionsService) CreateDesignerSession(
 	ctx context.Context, p DesignerSessionParams,
-) (map[string]any, error) {
+) (DesignerSessionEnvelope, error) {
 	body := params(
 		"workspaceId", p.WorkspaceID,
 		"chartId", p.ChartID,
 		"allowedOrigin", p.AllowedOrigin,
 		"authority", stringOrNil(p.Authority),
+		"canPublish", p.CanPublish,
 		"mode", stringOrNil(p.Mode),
+		"safeModeOptions", p.SafeModeOptions,
+		"features", p.Features,
 		"expiresInSeconds", intOrNil(p.ExpiresInSeconds),
 	)
-	return s.client.post(ctx, "/v1/designer/sessions", body, "")
+	response, err := s.client.post(ctx, "/v1/designer/sessions", body, "")
+	if err != nil {
+		return DesignerSessionEnvelope{}, err
+	}
+	return decodeResponse[DesignerSessionEnvelope](response)
 }
 
 // RevokeDesignerSession invalidates a designer token before it expires.

@@ -64,6 +64,11 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type rawRequestBody struct {
+	data        []byte
+	contentType string
+}
+
 // Option configures a Client.
 type Option func(*Client)
 
@@ -139,8 +144,9 @@ func (c *Client) Ready(ctx context.Context) (map[string]any, error) {
 	return c.Do(ctx, http.MethodGet, "/health/ready", nil, nil, "")
 }
 
-// Do is the escape hatch for surface this SDK does not wrap yet. It carries the
-// same auth, retries, idempotency and error mapping as everything else.
+// Do is the escape hatch for surface this SDK does not wrap yet. Reads retain
+// retries; raw mutations are single-attempt because their replay contract is
+// unknown.
 func (c *Client) Do(
 	ctx context.Context,
 	method, path string,
@@ -148,18 +154,40 @@ func (c *Client) Do(
 	body any,
 	idempotencyKey string,
 ) (map[string]any, error) {
+	return c.do(ctx, method, path, query, body, idempotencyKey, false)
+}
+
+// do keeps mutation retry policy out of the raw escape hatch. Only resource
+// methods backed by the API's exact response replay opt in to headerReplay.
+func (c *Client) do(
+	ctx context.Context,
+	method, path string,
+	query url.Values,
+	body any,
+	idempotencyKey string,
+	headerReplay bool,
+) (map[string]any, error) {
 	endpoint := c.baseURL + path
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
 	}
 
 	var payload []byte
+	contentType := "application/json"
 	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("seatlayer: encoding request body: %w", err)
+		if raw, ok := body.(rawRequestBody); ok {
+			payload = append([]byte(nil), raw.data...)
+			contentType = raw.contentType
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+		} else {
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				return nil, fmt.Errorf("seatlayer: encoding request body: %w", err)
+			}
+			payload = encoded
 		}
-		payload = encoded
 	}
 
 	header := http.Header{}
@@ -167,24 +195,27 @@ func (c *Client) Do(
 	header.Set("Accept", "application/json")
 	header.Set("User-Agent", userAgent)
 	if payload != nil {
-		header.Set("Content-Type", "application/json")
+		header.Set("Content-Type", contentType)
 	}
 
-	// Every mutation carries one. A retried POST that creates a second hold is
-	// worse than a failed POST, and the caller cannot tell from outside — so the
-	// SDK, which knows it retried, is the right place to guarantee it.
+	// Only operations with exact server-side response replay get an automatic
+	// key. A caller key on any other mutation is forwarded, but cannot opt that
+	// operation into automatic retries.
 	if method != http.MethodGet && method != http.MethodHead {
 		key := idempotencyKey
-		if key == "" {
+		if key == "" && headerReplay {
 			key = newIdempotencyKey()
 		}
-		if !idempotencyKeyPattern.MatchString(key) {
+		if key != "" && !idempotencyKeyPattern.MatchString(key) {
 			return nil, fmt.Errorf(
 				"seatlayer: invalid Idempotency-Key %q: allowed characters are A-Z a-z 0-9 . _ : - and the length must be 1-128",
 				key)
 		}
-		header.Set("Idempotency-Key", key)
+		if key != "" {
+			header.Set("Idempotency-Key", key)
+		}
 	}
+	retryAllowed := method == http.MethodGet || method == http.MethodHead || headerReplay
 
 	var lastErr error
 	for attempt := 0; attempt < c.maxRetries; attempt++ {
@@ -206,7 +237,7 @@ func (c *Client) Do(
 				return nil, &ConnectionError{Op: method + " " + path, Err: ctx.Err()}
 			}
 			lastErr = &ConnectionError{Op: method + " " + path, Err: err}
-			if attempt < c.maxRetries-1 {
+			if retryAllowed && attempt < c.maxRetries-1 {
 				if err := sleepCtx(ctx, backoff(attempt, -1)); err != nil {
 					return nil, err
 				}
@@ -219,7 +250,7 @@ func (c *Client) Do(
 		response.Body.Close()
 		if readErr != nil {
 			lastErr = &ConnectionError{Op: method + " " + path, Err: readErr}
-			if attempt < c.maxRetries-1 {
+			if retryAllowed && attempt < c.maxRetries-1 {
 				if err := sleepCtx(ctx, backoff(attempt, -1)); err != nil {
 					return nil, err
 				}
@@ -246,7 +277,7 @@ func (c *Client) Do(
 
 		retryAfter := parseRetryAfter(response.Header, errorBody)
 
-		if isRetryable(response.StatusCode) && attempt < c.maxRetries-1 {
+		if retryAllowed && isRetryable(response.StatusCode) && attempt < c.maxRetries-1 {
 			wait := backoff(attempt, -1)
 			if response.StatusCode == http.StatusTooManyRequests {
 				wait = time.Duration(retryAfter * float64(time.Second))
@@ -275,8 +306,21 @@ func (c *Client) post(ctx context.Context, path string, body any, idempotencyKey
 	return c.Do(ctx, http.MethodPost, path, nil, body, idempotencyKey)
 }
 
+func (c *Client) postHeaderReplay(
+	ctx context.Context, path string, body any, idempotencyKey string,
+) (map[string]any, error) {
+	return c.do(ctx, http.MethodPost, path, nil, body, idempotencyKey, true)
+}
+
 func (c *Client) put(ctx context.Context, path string, body any) (map[string]any, error) {
 	return c.Do(ctx, http.MethodPut, path, nil, body, "")
+}
+
+func (c *Client) putRaw(
+	ctx context.Context, path string, body []byte, contentType string,
+) (map[string]any, error) {
+	return c.Do(ctx, http.MethodPut, path, nil,
+		rawRequestBody{data: body, contentType: contentType}, "")
 }
 
 func (c *Client) patch(ctx context.Context, path string, body any) (map[string]any, error) {
@@ -285,6 +329,12 @@ func (c *Client) patch(ctx context.Context, path string, body any) (map[string]a
 
 func (c *Client) delete(ctx context.Context, path string) (map[string]any, error) {
 	return c.Do(ctx, http.MethodDelete, path, nil, nil, "")
+}
+
+func (c *Client) deleteQuery(
+	ctx context.Context, path string, query url.Values,
+) (map[string]any, error) {
+	return c.Do(ctx, http.MethodDelete, path, query, nil, "")
 }
 
 // isRetryable reports whether a status is worth another attempt.
@@ -378,4 +428,18 @@ func boolOrNil(value bool) any {
 		return nil
 	}
 	return value
+}
+
+// decodeResponse projects the transport's forward-compatible JSON object into
+// a named public wire type. Unknown additive fields remain harmless.
+func decodeResponse[T any](response map[string]any) (T, error) {
+	var decoded T
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return decoded, fmt.Errorf("seatlayer: encoding response projection: %w", err)
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return decoded, fmt.Errorf("seatlayer: decoding response projection: %w", err)
+	}
+	return decoded, nil
 }

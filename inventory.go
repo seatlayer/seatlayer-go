@@ -19,6 +19,16 @@ import (
 // authoritative answer, which is why it is a separate call.
 type InventoryService struct{ client *Client }
 
+// TrustedInventoryAccess carries private-allocation authority for trusted
+// server inventory mutations.
+type TrustedInventoryAccess struct {
+	ChannelIDs []string
+	// IgnoreChannelRestrictions is a privileged backend override.
+	IgnoreChannelRestrictions bool
+	// Reason is written to the audit trail for channel use or an override.
+	Reason string
+}
+
 func (s *InventoryService) path(eventKey, suffix string) string {
 	return "/v1/events/" + escape(eventKey) + suffix
 }
@@ -124,16 +134,35 @@ func (s *InventoryService) BookBestAvailable(
 // the seats to whoever is racing for them in between. A hold that is gone,
 // expired, or at its renewal cap answers 409 cannot_extend.
 func (s *InventoryService) ExtendHold(
-	ctx context.Context, eventKey, holdID string, ttlMs int64,
+	ctx context.Context, eventKey, holdID string, ttlMs int64, access ...TrustedInventoryAccess,
 ) (map[string]any, error) {
+	if len(access) > 1 {
+		return nil, errors.New("seatlayer: ExtendHold accepts at most one trusted access value")
+	}
+	authority := TrustedInventoryAccess{}
+	if len(access) == 1 {
+		authority = access[0]
+	}
 	return s.client.post(ctx, s.path(eventKey, "/extend"),
-		params("holdId", holdID, "ttlMs", int64OrNil(ttlMs)), "")
+		params(
+			"holdId", holdID,
+			"ttlMs", int64OrNil(ttlMs),
+			"channelIds", sliceOrNil(authority.ChannelIDs),
+			"ignoreChannelRestrictions", boolOrNil(authority.IgnoreChannelRestrictions),
+			"reason", stringOrNil(authority.Reason),
+		), "")
 }
 
 // RetrieveHold returns authoritative items and prices. Charge from this, not
 // from what the browser sent you.
-func (s *InventoryService) RetrieveHold(ctx context.Context, eventKey, holdID string) (map[string]any, error) {
-	return s.client.get(ctx, s.path(eventKey, "/holds/"+escape(holdID)), nil)
+func (s *InventoryService) RetrieveHold(
+	ctx context.Context, eventKey, holdID string,
+) (HoldInspection, error) {
+	response, err := s.client.get(ctx, s.path(eventKey, "/holds/"+escape(holdID)), nil)
+	if err != nil {
+		return HoldInspection{}, err
+	}
+	return decodeResponse[HoldInspection](response)
 }
 
 // Release frees held objects before the TTL expires.
@@ -201,8 +230,18 @@ func (s *InventoryService) Unbook(
 }
 
 // Block holds inventory back from sale (house seats, production holds).
-func (s *InventoryService) Block(ctx context.Context, eventKey string, labels []string) (map[string]any, error) {
-	return s.client.post(ctx, s.path(eventKey, "/block"), params("labels", labels), "")
+func (s *InventoryService) Block(
+	ctx context.Context, eventKey string, labels []string, releaseAt ...int64,
+) (map[string]any, error) {
+	if len(releaseAt) > 1 {
+		return nil, errors.New("seatlayer: Block accepts at most one releaseAt value")
+	}
+	var release any
+	if len(releaseAt) == 1 {
+		release = releaseAt[0]
+	}
+	return s.client.post(ctx, s.path(eventKey, "/block"),
+		params("labels", labels, "releaseAt", release), "")
 }
 
 // Unblock returns blocked objects to sale.

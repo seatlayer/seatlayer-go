@@ -2,6 +2,7 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strconv"
 	"strings"
@@ -149,12 +150,23 @@ func (s *ChannelsService) Unpause(
 		params("reason", stringOrNil(reason)), "")
 }
 
-// Archive retires a channel and moves its inventory to destination.
+// ChannelArchiveParams permits the contract's explicit null destination.
+type ChannelArchiveParams struct {
+	Destination NullableField[string]
+	Reason      string
+}
+
+// Archive retires a channel with an explicit destination value.
 func (s *ChannelsService) Archive(
-	ctx context.Context, eventKey, channelID, destination, reason string,
+	ctx context.Context, eventKey, channelID string, p ChannelArchiveParams,
 ) (map[string]any, error) {
-	return s.client.post(ctx, s.path(eventKey, "/"+escape(channelID)+"/archive"),
-		params("destination", destination, "reason", stringOrNil(reason)), "")
+	destination, present := p.Destination.requestValue()
+	if !present {
+		return nil, errors.New("seatlayer: archive destination is required; use FieldNull[string]() for null")
+	}
+	body := params("reason", stringOrNil(p.Reason))
+	body["destination"] = destination
+	return s.client.post(ctx, s.path(eventKey, "/"+escape(channelID)+"/archive"), body, "")
 }
 
 // BuyerAccessSessionParams defines the security boundary of a buyer token.
@@ -168,6 +180,8 @@ type BuyerAccessSessionParams struct {
 	PartnerRef       string
 	ClientRequestID  string
 	IdempotencyKey   string
+	// Nullable overrides fields when explicit JSON null is different from omission.
+	Nullable BuyerAccessSessionNullableFields
 }
 
 // CreateBuyerAccessSession mints a short-lived, origin-bound buyer token.
@@ -184,15 +198,14 @@ func (s *ChannelsService) CreateBuyerAccessSession(
 		"partnerRef", stringOrNil(p.PartnerRef),
 		"clientRequestId", stringOrNil(p.ClientRequestID),
 	)
+	p.Nullable.apply(body)
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/buyer-access-sessions",
 		body, p.IdempotencyKey)
 }
 
-// BuyerAccessSessionListParams filters and pages buyer access sessions.
+// BuyerAccessSessionListParams limits the buyer access-session projection.
 type BuyerAccessSessionListParams struct {
-	State  string
-	Limit  int
-	Cursor string
+	Limit int
 }
 
 // ListBuyerAccessSessions returns one page of buyer access sessions.
@@ -200,14 +213,8 @@ func (s *ChannelsService) ListBuyerAccessSessions(
 	ctx context.Context, eventKey string, p BuyerAccessSessionListParams,
 ) (map[string]any, error) {
 	query := url.Values{}
-	if p.State != "" {
-		query.Set("state", p.State)
-	}
 	if p.Limit != 0 {
 		query.Set("limit", strconv.Itoa(p.Limit))
-	}
-	if p.Cursor != "" {
-		query.Set("cursor", p.Cursor)
 	}
 	return s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/buyer-access-sessions", query)
 }
@@ -218,4 +225,104 @@ func (s *ChannelsService) RevokeBuyerAccessSession(
 ) (map[string]any, error) {
 	return s.client.delete(ctx, "/v1/events/"+escape(eventKey)+
 		"/buyer-access-sessions/"+escape(sessionID))
+}
+
+// AccessLinkCreateParams configures a hosted link. The response capability is
+// revealed once and the operation is never automatically retried.
+type AccessLinkCreateParams struct {
+	Label             NullableField[string]
+	ExpiresAt         int64
+	MaxRedemptions    int
+	MaxQuantity       int
+	SessionTTLSeconds int
+	IncludePublic     *bool
+	Reason            string
+	IdempotencyKey    string
+}
+
+// CreateAccessLink mints a hosted link and its one-time capability.
+func (s *ChannelsService) CreateAccessLink(
+	ctx context.Context, eventKey, channelID string, p AccessLinkCreateParams,
+) (AccessLinkReveal, error) {
+	body := params(
+		"expiresAt", int64OrNil(p.ExpiresAt),
+		"maxRedemptions", intOrNil(p.MaxRedemptions),
+		"maxQuantity", intOrNil(p.MaxQuantity),
+		"sessionTtlSeconds", intOrNil(p.SessionTTLSeconds),
+		"includePublic", p.IncludePublic,
+		"reason", stringOrNil(p.Reason),
+	)
+	if value, present := p.Label.requestValue(); present {
+		body["label"] = value
+	}
+	response, err := s.client.post(ctx,
+		s.path(eventKey, "/"+escape(channelID)+"/access-links"), body, p.IdempotencyKey)
+	if err != nil {
+		return AccessLinkReveal{}, err
+	}
+	return decodeResponse[AccessLinkReveal](response)
+}
+
+// ListAccessLinks returns status only, never a stored capability.
+func (s *ChannelsService) ListAccessLinks(
+	ctx context.Context, eventKey, channelID string,
+) (AccessLinkList, error) {
+	response, err := s.client.get(ctx,
+		s.path(eventKey, "/"+escape(channelID)+"/access-links"), nil)
+	if err != nil {
+		return AccessLinkList{}, err
+	}
+	return decodeResponse[AccessLinkList](response)
+}
+
+// AccessLinkRotateParams requires the caller to choose whether old sessions end.
+type AccessLinkRotateParams struct {
+	EndActiveSessions bool
+	Reason            string
+}
+
+// RotateAccessLink replaces a hosted link and reveals the successor once.
+func (s *ChannelsService) RotateAccessLink(
+	ctx context.Context, eventKey, channelID, linkID string, p AccessLinkRotateParams,
+) (AccessLinkReveal, error) {
+	body := params(
+		"endActiveSessions", p.EndActiveSessions,
+		"reason", stringOrNil(p.Reason),
+	)
+	response, err := s.client.post(ctx, s.path(eventKey, "/"+escape(channelID)+
+		"/access-links/"+escape(linkID)+"/rotate"), body, "")
+	if err != nil {
+		return AccessLinkReveal{}, err
+	}
+	return decodeResponse[AccessLinkReveal](response)
+}
+
+// AccessLinkRevokeParams controls optional session cascade and audit reason.
+type AccessLinkRevokeParams struct {
+	EndActiveSessions bool
+	Reason            string
+}
+
+// RevokeAccessLink stops a hosted link from admitting new buyers.
+func (s *ChannelsService) RevokeAccessLink(
+	ctx context.Context, eventKey, channelID, linkID string,
+	options ...AccessLinkRevokeParams,
+) (AccessLinkRevokeResult, error) {
+	if len(options) > 1 {
+		return AccessLinkRevokeResult{}, errors.New(
+			"seatlayer: RevokeAccessLink accepts at most one params value")
+	}
+	query := url.Values{}
+	if len(options) == 1 {
+		if options[0].EndActiveSessions {
+			query.Set("endActiveSessions", "1")
+		}
+		setIfNotEmpty(query, "reason", options[0].Reason)
+	}
+	response, err := s.client.deleteQuery(ctx, s.path(eventKey, "/"+escape(channelID)+
+		"/access-links/"+escape(linkID)), query)
+	if err != nil {
+		return AccessLinkRevokeResult{}, err
+	}
+	return decodeResponse[AccessLinkRevokeResult](response)
 }

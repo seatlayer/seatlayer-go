@@ -350,3 +350,65 @@ type EventLogPage struct {
 	Entries    []EventLogEntry `json:"entries"`
 	NextBefore *int64          `json:"nextBefore"`
 }
+
+// TicketRelease is the live response shape. Consumed and Remaining are
+// calculated by the service and therefore are not accepted by replacement.
+type TicketRelease struct {
+	ID            string  `json:"id"`
+	Position      int     `json:"position"`
+	Name          string  `json:"name"`
+	CategoryKey   *string `json:"categoryKey"`
+	Price         int     `json:"price"`
+	PreviousPrice *int    `json:"previousPrice"`
+	Quota         *int    `json:"quota"`
+	StartsAt      *int64  `json:"startsAt"`
+	EndsAt        *int64  `json:"endsAt"`
+	Action        string  `json:"action"`
+	ActionURL     *string `json:"actionUrl"`
+	SoldOutAt     *int64  `json:"soldOutAt"`
+	Consumed      *int    `json:"consumed,omitempty"`
+	Remaining     *int    `json:"remaining"`
+}
+
+type TicketReleaseList struct {
+	Releases []TicketRelease `json:"releases"`
+}
+
+// TicketReleaseReplaceInput is the request-only release representation. Use
+// FieldNull for an explicit JSON null and FieldValue to send an optional value.
+// The service validates the 12-release limit and all release rules.
+type TicketReleaseReplaceInput struct {
+	ID            NullableField[string]
+	Name          string
+	CategoryKey   NullableField[string]
+	Price         int
+	PreviousPrice NullableField[int]
+	Quota         NullableField[int]
+	StartsAt      NullableField[int64]
+	EndsAt        NullableField[int64]
+	Action        string
+	ActionURL     NullableField[string]
+}
+
+func (p TicketReleaseReplaceInput) requestValue() map[string]any {
+	body := params("name", p.Name, "price", p.Price, "action", stringOrNil(p.Action))
+	fields := []struct {
+		key     string
+		value   any
+		present bool
+	}{
+		fieldRequestValue("id", p.ID),
+		fieldRequestValue("categoryKey", p.CategoryKey),
+		fieldRequestValue("previousPrice", p.PreviousPrice),
+		fieldRequestValue("quota", p.Quota),
+		fieldRequestValue("startsAt", p.StartsAt),
+		fieldRequestValue("endsAt", p.EndsAt),
+		fieldRequestValue("actionUrl", p.ActionURL),
+	}
+	for _, field := range fields {
+		if field.present {
+			body[field.key] = field.value
+		}
+	}
+	return body
+}

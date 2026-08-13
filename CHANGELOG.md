@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+- Added template instantiation and ticket-release management
+  (`Templates.InstantiateTemplate`, `Events.ListTicketReleases`,
+  `Events.UpdateTicketReleases`, and `Events.CloseTicketRelease`). Template
+  instantiation uses exact header replay; release replacement and close remain
+  deliberately single-attempt.
+
 - **Security/reliability:** Mutations now default to a single attempt. Automatic header-replay
-  retries are limited to chart create/copy, event create, and workspace create, preventing
+  retries are limited to chart create/copy, template instantiation, event create, and workspace create, preventing
   transient failures from duplicating holds or best-available results and from issuing extra
   show-once credentials.
 - Aligned event, inventory, webhook, manage-session, and Designer requests with the generated

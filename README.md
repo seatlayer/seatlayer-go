@@ -35,8 +35,8 @@ if err != nil {
 }
 ctx := context.Background()
 
-// 1. Provision a venue for a new organiser from one of your templates.
-chart, err := client.Charts.Copy(ctx, "c_template_arena")
+// 1. Materialize a published catalog template as the organiser's draft chart.
+chart, err := client.Templates.InstantiateTemplate(ctx, "arena")
 if err != nil {
     return err
 }
@@ -296,11 +296,12 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Automatic mutation retries are limited to the four
-operations backed by exact response replay: `Charts.Create`, `Charts.Copy`, `Events.Create`, and
-`Workspaces.Create`. Other 4xx responses are never retried.
+`Retry-After` wins when the server sends it. Automatic mutation retries are limited to the five
+operations backed by exact response replay: `Charts.Create`, `Charts.Copy`,
+`Templates.InstantiateTemplate`, `Events.Create`, and `Workspaces.Create`. Other mutations,
+including ticket-release changes, stay single-attempt. Other 4xx responses are never retried.
 
-**Idempotency.** Those four replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those five replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. Other mutations are single-attempt and receive no
 automatic key. A caller-supplied key is forwarded but does not enable retries. This includes
 inventory holds and bookings, show-once credential or secret creation, unsupported operations, and

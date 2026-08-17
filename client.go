@@ -54,6 +54,7 @@ type Client struct {
 	Events     *EventsService
 	Inventory  *InventoryService
 	Sessions   *SessionsService
+	Templates  *TemplatesService
 	Webhooks   *WebhooksService
 	Workspaces *WorkspacesService
 
@@ -130,6 +131,7 @@ func New(secretKey string, options ...Option) (*Client, error) {
 	client.Events = &EventsService{client: client}
 	client.Inventory = &InventoryService{client: client}
 	client.Sessions = &SessionsService{client: client}
+	client.Templates = &TemplatesService{client: client}
 	client.Webhooks = &WebhooksService{client: client}
 	client.Workspaces = &WorkspacesService{client: client}
 

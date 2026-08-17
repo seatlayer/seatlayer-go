@@ -192,6 +192,46 @@ func (s *EventsService) Archive(ctx context.Context, eventKey string) (map[strin
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/archive", nil, "")
 }
 
+// ListTicketReleases returns releases with server-computed quota consumption.
+func (s *EventsService) ListTicketReleases(ctx context.Context, eventKey string) (TicketReleaseList, error) {
+	response, err := s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/releases", nil)
+	if err != nil {
+		return TicketReleaseList{}, err
+	}
+	return decodeResponse[TicketReleaseList](response)
+}
+
+// UpdateTicketReleases replaces the complete ordered release list. The public
+// route has no replay contract, so this is deliberately single-attempt.
+func (s *EventsService) UpdateTicketReleases(
+	ctx context.Context, eventKey string, releases []TicketReleaseReplaceInput,
+) (TicketReleaseList, error) {
+	body := make([]map[string]any, len(releases))
+	for i, release := range releases {
+		body[i] = release.requestValue()
+	}
+	response, err := s.client.put(ctx, "/v1/events/"+escape(eventKey)+"/releases", map[string]any{
+		"releases": body,
+	})
+	if err != nil {
+		return TicketReleaseList{}, err
+	}
+	return decodeResponse[TicketReleaseList](response)
+}
+
+// CloseTicketRelease closes one release immediately while preserving it for
+// reporting. It remains single-attempt because it has no replay contract.
+func (s *EventsService) CloseTicketRelease(
+	ctx context.Context, eventKey, releaseID string,
+) (TicketReleaseList, error) {
+	response, err := s.client.post(ctx,
+		"/v1/events/"+escape(eventKey)+"/releases/"+escape(releaseID)+"/close", nil, "")
+	if err != nil {
+		return TicketReleaseList{}, err
+	}
+	return decodeResponse[TicketReleaseList](response)
+}
+
 // RetrieveHoldTTL reads the checkout window buyers get for this event.
 func (s *EventsService) RetrieveHoldTTL(ctx context.Context, eventKey string) (map[string]any, error) {
 	return s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/hold-ttl", nil)

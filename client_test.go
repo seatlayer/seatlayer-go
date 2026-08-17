@@ -136,10 +136,12 @@ func TestIdempotencyKeyOnlyGeneratedForHeaderReplayMutations(t *testing.T) {
 		{status: 200, body: `{"events":[]}`},
 		{status: 201, body: `{}`},
 		{status: 201, body: `{}`},
+		{status: 201, body: `{}`},
 	})
 
 	_, _ = client.Events.List(context.Background(), nil)
 	_, _ = client.Events.Create(context.Background(), EventCreateParams{ChartID: "c_1"})
+	_, _ = client.Templates.InstantiateTemplate(context.Background(), "arena")
 	_, _ = client.Inventory.Hold(context.Background(), "ev_1", HoldParams{Labels: []string{"A-1"}})
 
 	if got := call(t, calls, 0).header.Get("Idempotency-Key"); got != "" {
@@ -148,7 +150,10 @@ func TestIdempotencyKeyOnlyGeneratedForHeaderReplayMutations(t *testing.T) {
 	if got := call(t, calls, 1).header.Get("Idempotency-Key"); !idempotencyKeyPattern.MatchString(got) {
 		t.Fatalf("replay-backed POST idempotency key invalid: %q", got)
 	}
-	if got := call(t, calls, 2).header.Get("Idempotency-Key"); got != "" {
+	if got := call(t, calls, 2).header.Get("Idempotency-Key"); !idempotencyKeyPattern.MatchString(got) {
+		t.Fatalf("template instantiation idempotency key invalid: %q", got)
+	}
+	if got := call(t, calls, 3).header.Get("Idempotency-Key"); got != "" {
 		t.Fatalf("ordinary mutation should not get an automatic idempotency key, got %q", got)
 	}
 }
@@ -308,6 +313,10 @@ func TestHeaderReplayMutationsRetry429AndReuseIdempotencyKey(t *testing.T) {
 		}},
 		{"copy chart", func(client *Client) error {
 			_, err := client.Charts.Copy(context.Background(), "c_1")
+			return err
+		}},
+		{"instantiate template", func(client *Client) error {
+			_, err := client.Templates.InstantiateTemplate(context.Background(), "arena")
 			return err
 		}},
 		{"create event", func(client *Client) error {
@@ -859,6 +868,77 @@ func TestBoundedNullableAndChartContracts(t *testing.T) {
 		if !mapsEqual(got, want) {
 			t.Fatalf("request %d body = %#v, want %#v", i, got, want)
 		}
+	}
+}
+
+func TestTemplateAndTicketReleaseTransportContracts(t *testing.T) {
+	client, calls := newTestClient(t, []stub{
+		{status: 201, body: `{"meta":{"id":"c_draft"}}`},
+		{status: 200, body: `{"releases":[{"id":"rel_0123456789ab","position":1,"name":"Early","categoryKey":null,"price":2500,"previousPrice":null,"quota":10,"startsAt":null,"endsAt":null,"action":"buy","actionUrl":null,"soldOutAt":null,"consumed":2,"remaining":8}]}`},
+		{status: 200, body: `{"releases":[]}`},
+		{status: 200, body: `{"releases":[]}`},
+	})
+
+	chart, err := client.Templates.InstantiateTemplate(context.Background(), "arena/2026",
+		TemplateInstantiateParams{IdempotencyKey: "template-arena-2026"})
+	if err != nil || chart["meta"].(map[string]any)["id"] != "c_draft" {
+		t.Fatalf("instantiate template = %#v, %v", chart, err)
+	}
+	listed, err := client.Events.ListTicketReleases(context.Background(), "ev/1")
+	if err != nil || len(listed.Releases) != 1 || listed.Releases[0].Consumed == nil ||
+		*listed.Releases[0].Consumed != 2 || listed.Releases[0].Remaining == nil ||
+		*listed.Releases[0].Remaining != 8 {
+		t.Fatalf("list releases = %#v, %v", listed, err)
+	}
+	_, err = client.Events.UpdateTicketReleases(context.Background(), "ev/1", []TicketReleaseReplaceInput{{
+		Name: "Early", Price: 2500, Quota: FieldValue(10),
+	}})
+	if err != nil {
+		t.Fatalf("replace releases: %v", err)
+	}
+	_, err = client.Events.CloseTicketRelease(context.Background(), "ev/1", "rel/0123456789ab")
+	if err != nil {
+		t.Fatalf("close release: %v", err)
+	}
+
+	if got := call(t, calls, 0); got.escapedPath != "/v1/templates/arena%2F2026/instantiate" ||
+		got.header.Get("Idempotency-Key") != "template-arena-2026" || got.body != "{}" {
+		t.Fatalf("template request = %#v", got)
+	}
+	if got := call(t, calls, 1); got.escapedPath != "/v1/events/ev%2F1/releases" {
+		t.Fatalf("list release request = %#v", got)
+	}
+	if got := call(t, calls, 2); got.method != "PUT" || got.escapedPath != "/v1/events/ev%2F1/releases" {
+		t.Fatalf("replace release request = %#v", got)
+	}
+	var replaceBody map[string]any
+	if err := json.Unmarshal([]byte(call(t, calls, 2).body), &replaceBody); err != nil ||
+		!mapsEqual(replaceBody, map[string]any{"releases": []any{map[string]any{
+			"name": "Early", "price": float64(2500), "quota": float64(10),
+		}}}) {
+		t.Fatalf("replace body = %#v, decode err = %v", replaceBody, err)
+	}
+	if got := call(t, calls, 3); got.escapedPath !=
+		"/v1/events/ev%2F1/releases/rel%2F0123456789ab/close" {
+		t.Fatalf("close release request = %#v", got)
+	}
+}
+
+func TestTicketReleaseMutationsRemainSingleAttempt(t *testing.T) {
+	update, updateCalls := newTestClient(t, []stub{
+		{status: 429, body: `{"error":"rate_limited"}`, headers: map[string]string{"Retry-After": "0"}},
+	}, WithMaxRetries(2))
+	_, updateErr := update.Events.UpdateTicketReleases(context.Background(), "ev_1", nil)
+	if updateErr == nil || len(*updateCalls) != 1 {
+		t.Fatalf("release replacement must be single-attempt; calls=%d err=%v", len(*updateCalls), updateErr)
+	}
+
+	close, closeCalls := newTestClient(t, []stub{
+		{status: 429, body: `{"error":"rate_limited"}`, headers: map[string]string{"Retry-After": "0"}},
+	}, WithMaxRetries(2))
+	_, closeErr := close.Events.CloseTicketRelease(context.Background(), "ev_1", "rel_0123456789ab")
+	if closeErr == nil || len(*closeCalls) != 1 {
+		t.Fatalf("release close must be single-attempt; calls=%d err=%v", len(*closeCalls), closeErr)
 	}
 }
 

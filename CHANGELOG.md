@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.5.0 — 2026-08-21
+
+- Added `PerformanceGroups`, the trusted server service for fixed two-to-eight
+  performance runs. It creates and activates groups, mints one-time browser
+  access, retrieves authoritative group holds, and confirms bookings with
+  stable action and order references. Browser-only group routes remain outside
+  this secret-key SDK.
+
 - Added template instantiation and ticket-release management
   (`Templates.InstantiateTemplate`, `Events.ListTicketReleases`,
   `Events.UpdateTicketReleases`, and `Events.CloseTicketRelease`). Template

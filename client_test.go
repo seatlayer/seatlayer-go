@@ -158,6 +158,98 @@ func TestIdempotencyKeyOnlyGeneratedForHeaderReplayMutations(t *testing.T) {
 	}
 }
 
+func TestPerformanceGroupsUseTheServerOnlyWorkflow(t *testing.T) {
+	// This covers the complete trusted-server surface. The buyer picker only
+	// receives the token revealed by CreateBuyerAccessSession; it never gains
+	// the secret key that drives the rest of this workflow.
+	client, calls := newTestClient(t, []stub{
+		{status: 200, body: `{"performanceGroups":[]}`},
+		{status: 201, body: `{"performanceGroup":{"key":"pg_1"}}`},
+		{status: 200, body: `{"performanceGroup":{"key":"pg_1"}}`},
+		{status: 204},
+		{status: 202, body: `{"lifecycleOperation":{"operationId":"op_activate"}}`},
+		{status: 202, body: `{"lifecycleOperation":{"operationId":"op_close"}}`},
+		{status: 200, body: `{"lifecycleOperation":{"operationId":"op_activate"}}`},
+		{status: 201, body: `{"buyerAccessSession":{"token":"buyer_secret"}}`},
+		{status: 200, body: `{"buyerAccessSessions":[]}`},
+		{status: 200, body: `{"buyerAccessSession":{"id":"bas_1"}}`},
+		{status: 200, body: `{"hold":{"operationId":"hold_1"}}`},
+		{status: 202, body: `{"booking":{"actionId":"book_1"}}`},
+		{status: 200, body: `{"booking":{"actionId":"book_1"}}`},
+	})
+	ctx := context.Background()
+
+	_, _ = client.PerformanceGroups.List(ctx, &PerformanceGroupListParams{
+		WorkspaceID: "ws_1", ExternalRef: "bundle-42", State: "active", Limit: 5, Cursor: "next_1",
+	})
+	_, _ = client.PerformanceGroups.Create(ctx, PerformanceGroupCreateParams{
+		Name: "Three-night run", EventKeys: []string{"ev_1", "ev_2"},
+		ExternalRef: FieldValue("bundle-42"),
+	})
+	_, _ = client.PerformanceGroups.Retrieve(ctx, "pg/a")
+	_ = client.PerformanceGroups.Delete(ctx, "pg/a")
+	_, _ = client.PerformanceGroups.Activate(ctx, "pg/a", 3)
+	_, _ = client.PerformanceGroups.Close(ctx, "pg/a", 4)
+	_, _ = client.PerformanceGroups.RetrieveLifecycle(ctx, "pg/a", "op/activate")
+	_, _ = client.PerformanceGroups.CreateBuyerAccessSession(ctx, "pg/a", PerformanceGroupBuyerAccessSessionParams{
+		AllowedOrigin: "https://tickets.example", IncludePublic: false,
+		ChannelIDsByEvent: map[string][]string{"ev_1": {"ch_1"}}, ExpiresInSeconds: 600,
+		MaxQuantity: FieldValue(4), BuyerRef: FieldValue("buyer_1"), PartnerRef: FieldNull[string](),
+	})
+	_, _ = client.PerformanceGroups.ListBuyerAccessSessions(ctx, "pg/a", 10)
+	_, _ = client.PerformanceGroups.RevokeBuyerAccessSession(ctx, "pg/a", "bas/1")
+	_, _ = client.PerformanceGroups.RetrieveHold(ctx, "pg/a", "hold/1")
+	_, _ = client.PerformanceGroups.BookHold(ctx, "pg/a", "hold/1", "book/1", "merchant-order-9")
+	_, _ = client.PerformanceGroups.RetrieveBooking(ctx, "pg/a", "book/1")
+
+	if got := call(t, calls, 0); got.method != http.MethodGet || got.path != "/v1/performance-groups" || got.query != "cursor=next_1&externalRef=bundle-42&limit=5&state=active&workspaceId=ws_1" {
+		t.Fatalf("list request = %#v", got)
+	}
+	if got := call(t, calls, 1); got.method != http.MethodPost || got.path != "/v1/performance-groups" || !idempotencyKeyPattern.MatchString(got.header.Get("Idempotency-Key")) {
+		t.Fatalf("create must use exact header replay, got %#v", got)
+	}
+	if got := call(t, calls, 2); got.escapedPath != "/v1/performance-groups/pg%2Fa" {
+		t.Fatalf("retrieve path = %#v", got)
+	}
+	if got := call(t, calls, 3); got.method != http.MethodDelete || got.path != "/v1/performance-groups/pg/a" {
+		t.Fatalf("delete request = %#v", got)
+	}
+	for _, index := range []int{4, 5, 7, 11} {
+		if got := call(t, calls, index).header.Get("Idempotency-Key"); got != "" {
+			t.Fatalf("single-attempt mutation %d must not get an automatic idempotency key, got %q", index, got)
+		}
+	}
+	if got := call(t, calls, 6).escapedPath; got != "/v1/performance-groups/pg%2Fa/lifecycle/op%2Factivate" {
+		t.Fatalf("lifecycle path = %q", got)
+	}
+	if got := call(t, calls, 7); got.path != "/v1/performance-groups/pg/a/buyer-access-sessions" {
+		t.Fatalf("buyer session path = %#v", got)
+	} else {
+		var body map[string]any
+		if err := json.Unmarshal([]byte(got.body), &body); err != nil {
+			t.Fatalf("decode buyer session body: %v", err)
+		}
+		if body["includePublic"] != false || body["partnerRef"] != nil || body["maxQuantity"] != float64(4) {
+			t.Fatalf("buyer session body = %#v", body)
+		}
+	}
+	if got := call(t, calls, 8); got.query != "limit=10" {
+		t.Fatalf("buyer session list = %#v", got)
+	}
+	if got := call(t, calls, 9).escapedPath; got != "/v1/performance-groups/pg%2Fa/buyer-access-sessions/bas%2F1" {
+		t.Fatalf("revoke path = %q", got)
+	}
+	if got := call(t, calls, 10).escapedPath; got != "/v1/performance-groups/pg%2Fa/holds/hold%2F1" {
+		t.Fatalf("hold path = %q", got)
+	}
+	if got := call(t, calls, 11).escapedPath; got != "/v1/performance-groups/pg%2Fa/holds/hold%2F1/book" {
+		t.Fatalf("book path = %q", got)
+	}
+	if got := call(t, calls, 12).escapedPath; got != "/v1/performance-groups/pg%2Fa/bookings/book%2F1" {
+		t.Fatalf("booking path = %q", got)
+	}
+}
+
 func TestHonoursCallerIdempotencyKey(t *testing.T) {
 	client, calls := newTestClient(t, []stub{{status: 201, body: `{}`}})
 	_, _ = client.Events.Create(context.Background(),

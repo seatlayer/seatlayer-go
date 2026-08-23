@@ -49,14 +49,15 @@ var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 // It is safe for concurrent use: the underlying http.Client is, and Client
 // holds no mutable state of its own.
 type Client struct {
-	Charts     *ChartsService
-	Channels   *ChannelsService
-	Events     *EventsService
-	Inventory  *InventoryService
-	Sessions   *SessionsService
-	Templates  *TemplatesService
-	Webhooks   *WebhooksService
-	Workspaces *WorkspacesService
+	Charts            *ChartsService
+	Channels          *ChannelsService
+	Events            *EventsService
+	Inventory         *InventoryService
+	PerformanceGroups *PerformanceGroupsService
+	Sessions          *SessionsService
+	Templates         *TemplatesService
+	Webhooks          *WebhooksService
+	Workspaces        *WorkspacesService
 
 	secretKey  string
 	baseURL    string
@@ -130,6 +131,7 @@ func New(secretKey string, options ...Option) (*Client, error) {
 	client.Channels = &ChannelsService{client: client}
 	client.Events = &EventsService{client: client}
 	client.Inventory = &InventoryService{client: client}
+	client.PerformanceGroups = &PerformanceGroupsService{client: client}
 	client.Sessions = &SessionsService{client: client}
 	client.Templates = &TemplatesService{client: client}
 	client.Webhooks = &WebhooksService{client: client}

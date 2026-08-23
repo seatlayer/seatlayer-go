@@ -924,6 +924,71 @@ func TestTemplateAndTicketReleaseTransportContracts(t *testing.T) {
 	}
 }
 
+func TestEventConfigurationBindingContract(t *testing.T) {
+	binding := `{"configuration":{"id":"ec_touring","version":3},"revision":7,` +
+		`"changedBy":"api-key:key_1","changedAt":123,"audit":[` +
+		`{"id":"eca_1","from":null,"to":{"id":"ec_touring","version":3},` +
+		`"revision":7,"actor":"api-key:key_1","createdAt":123}]}`
+	client, calls := newTestClient(t, []stub{
+		{status: 200, body: binding},
+		{status: 200, body: binding},
+		{status: 200, body: `{"configuration":null,"revision":8,"changedBy":null,"changedAt":null,"audit":[]}`},
+	})
+
+	retrieved, err := client.Events.RetrieveConfigurationBinding(context.Background(), "ev / main")
+	if err != nil || retrieved.Configuration == nil || retrieved.Configuration.ID != "ec_touring" ||
+		retrieved.Configuration.Version != 3 || len(retrieved.Audit) != 1 ||
+		retrieved.Audit[0].From != nil || retrieved.Audit[0].To == nil {
+		t.Fatalf("retrieve configuration binding = %#v, %v", retrieved, err)
+	}
+	configuration := &EventConfigurationRef{ID: "ec_touring", Version: 3}
+	_, err = client.Events.UpdateConfigurationBinding(context.Background(), "ev / main",
+		EventConfigurationBindingUpdateParams{ExpectedRevision: 6, Configuration: configuration})
+	if err != nil {
+		t.Fatalf("attach configuration binding: %v", err)
+	}
+	detached, err := client.Events.UpdateConfigurationBinding(context.Background(), "ev / main",
+		EventConfigurationBindingUpdateParams{ExpectedRevision: 7, Configuration: nil})
+	if err != nil || detached.Configuration != nil || detached.ChangedBy != nil || detached.ChangedAt != nil {
+		t.Fatalf("detach configuration binding = %#v, %v", detached, err)
+	}
+
+	for i := 0; i < 3; i++ {
+		got := call(t, calls, i)
+		if got.escapedPath != "/v1/events/ev%20%2F%20main/event-configuration" {
+			t.Fatalf("configuration request %d path = %q", i, got.escapedPath)
+		}
+	}
+	if got := call(t, calls, 0); got.method != "GET" {
+		t.Fatalf("configuration read method = %q", got.method)
+	}
+	wants := []map[string]any{
+		{"expectedRevision": float64(6), "configuration": map[string]any{"id": "ec_touring", "version": float64(3)}},
+		{"expectedRevision": float64(7), "configuration": nil},
+	}
+	for i, want := range wants {
+		got := call(t, calls, i+1)
+		var body map[string]any
+		if err := json.Unmarshal([]byte(got.body), &body); err != nil || !mapsEqual(body, want) {
+			t.Fatalf("configuration request %d body = %#v, decode err = %v", i+1, body, err)
+		}
+		if got.method != "PUT" || got.header.Get("Idempotency-Key") != "" {
+			t.Fatalf("configuration request %d transport = %#v", i+1, got)
+		}
+	}
+}
+
+func TestEventConfigurationMutationRemainsSingleAttempt(t *testing.T) {
+	client, calls := newTestClient(t, []stub{
+		{status: 429, body: `{"error":"rate_limited"}`, headers: map[string]string{"Retry-After": "0"}},
+	}, WithMaxRetries(2))
+	_, err := client.Events.UpdateConfigurationBinding(context.Background(), "ev_1",
+		EventConfigurationBindingUpdateParams{ExpectedRevision: 1})
+	if err == nil || len(*calls) != 1 {
+		t.Fatalf("configuration binding must be single-attempt; calls=%d err=%v", len(*calls), err)
+	}
+}
+
 func TestTicketReleaseMutationsRemainSingleAttempt(t *testing.T) {
 	update, updateCalls := newTestClient(t, []stub{
 		{status: 429, body: `{"error":"rate_limited"}`, headers: map[string]string{"Retry-After": "0"}},

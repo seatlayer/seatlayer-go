@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added exact immutable Event configuration binding reads and compare-and-set
+  attach/detach through `Events.RetrieveConfigurationBinding` and
+  `Events.UpdateConfigurationBinding`. Updates remain deliberately single-attempt.
+
 - Added template instantiation and ticket-release management
   (`Templates.InstantiateTemplate`, `Events.ListTicketReleases`,
   `Events.UpdateTicketReleases`, and `Events.CloseTicketRelease`). Template

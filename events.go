@@ -119,6 +119,34 @@ func (s *EventsService) Retrieve(ctx context.Context, eventKey string) (map[stri
 	return s.client.get(ctx, "/v1/events/"+escape(eventKey), nil)
 }
 
+// RetrieveConfigurationBinding reads the Event's exact immutable configuration
+// selection and audit history.
+func (s *EventsService) RetrieveConfigurationBinding(
+	ctx context.Context, eventKey string,
+) (EventConfigurationBinding, error) {
+	response, err := s.client.get(ctx, "/v1/events/"+escape(eventKey)+"/event-configuration", nil)
+	if err != nil {
+		return EventConfigurationBinding{}, err
+	}
+	return decodeResponse[EventConfigurationBinding](response)
+}
+
+// UpdateConfigurationBinding attaches an exact published configuration version,
+// or explicitly detaches it when Configuration is nil. The compare-and-set
+// mutation stays single-attempt because the public operation has no replay contract.
+func (s *EventsService) UpdateConfigurationBinding(
+	ctx context.Context, eventKey string, p EventConfigurationBindingUpdateParams,
+) (EventConfigurationBinding, error) {
+	response, err := s.client.put(ctx, "/v1/events/"+escape(eventKey)+"/event-configuration", map[string]any{
+		"expectedRevision": p.ExpectedRevision,
+		"configuration":    p.Configuration,
+	})
+	if err != nil {
+		return EventConfigurationBinding{}, err
+	}
+	return decodeResponse[EventConfigurationBinding](response)
+}
+
 // Update changes event metadata.
 func (s *EventsService) Update(ctx context.Context, eventKey string, fields map[string]any) (map[string]any, error) {
 	return s.client.patch(ctx, "/v1/events/"+escape(eventKey), fields)

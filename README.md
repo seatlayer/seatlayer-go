@@ -338,7 +338,7 @@ client.Do(ctx, http.MethodPost, "/v1/events/ev_1/some-new-route", nil, map[strin
 | Service | Methods |
 | --- | --- |
 | `Charts` | `List` `All` `Create` `Retrieve` `Update` `Delete` `Copy` `Archive` `Unarchive` `Publish` |
-| `Events` | `List` `All` `Create` `Retrieve` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
+| `Events` | `List` `All` `Create` `Retrieve` `RetrieveConfigurationBinding` `UpdateConfigurationBinding` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
 | `Channels` | `ListChannels` `CreateChannel` `UpdateChannel` `UpdateAssignments` `ListAllocation` `RetrieveAccessPreview` `RetrieveReport` `Pause` `Unpause` `Archive` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `CreateAccessLink` `ListAccessLinks` `RotateAccessLink` `RevokeAccessLink` |
 | `Inventory` | `Hold` `HoldBestAvailable` `BookBestAvailable` `ExtendHold` `RetrieveHold` `Release` `Book` `BoxOfficeBook` `Unbook` `Block` `Unblock` `UnblockAll` `RetrieveAvailability` `UpdateAvailability` `ListBookings` `RetrieveBooking` |
 | `Sessions` | `CreateManageSession` `RevokeManageSession` `CreateDesignerSession` `RevokeDesignerSession` |

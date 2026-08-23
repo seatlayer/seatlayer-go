@@ -351,6 +351,40 @@ type EventLogPage struct {
 	NextBefore *int64          `json:"nextBefore"`
 }
 
+// EventConfigurationRef selects one immutable published configuration version.
+// Configuration identity remains separate from the chart's venue geometry.
+type EventConfigurationRef struct {
+	ID      string `json:"id"`
+	Version int64  `json:"version"`
+}
+
+// EventConfigurationBindingAudit records one binding revision.
+type EventConfigurationBindingAudit struct {
+	ID        string                 `json:"id"`
+	From      *EventConfigurationRef `json:"from"`
+	To        *EventConfigurationRef `json:"to"`
+	Revision  int64                  `json:"revision"`
+	Actor     string                 `json:"actor"`
+	CreatedAt int64                  `json:"createdAt"`
+}
+
+// EventConfigurationBinding is the Event's current immutable configuration
+// selection plus its compare-and-set revision and audit trail.
+type EventConfigurationBinding struct {
+	Configuration *EventConfigurationRef           `json:"configuration"`
+	Revision      int64                            `json:"revision"`
+	ChangedBy     *string                          `json:"changedBy"`
+	ChangedAt     *int64                           `json:"changedAt"`
+	Audit         []EventConfigurationBindingAudit `json:"audit"`
+}
+
+// EventConfigurationBindingUpdateParams attaches an exact published version.
+// A nil Configuration explicitly detaches the current selection.
+type EventConfigurationBindingUpdateParams struct {
+	ExpectedRevision int64
+	Configuration    *EventConfigurationRef
+}
+
 // TicketRelease is the live response shape. Consumed and Remaining are
 // calculated by the service and therefore are not accepted by replacement.
 type TicketRelease struct {

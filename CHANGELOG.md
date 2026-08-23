@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-08-23
 
 - Added exact immutable Event configuration binding reads and compare-and-set
   attach/detach through `Events.RetrieveConfigurationBinding` and

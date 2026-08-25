@@ -1,5 +1,10 @@
 // Package seatlayer is the official Go server SDK for the SeatLayer
-// reserved-seating API.
+// reserved-seating ticketing API: seating charts, seat maps, events, sales
+// channels, seat holds, seat booking, and live inventory.
+//
+// This is the trusted side of a reserved-seating integration. The buyer
+// surface selects and holds seats; this package inspects the hold, prices it
+// from server data, and books it with a stable booking reference.
 //
 // Server-side only: this package authenticates with your secret key. Never
 // embed it in anything a ticket buyer can reach — browser surfaces get

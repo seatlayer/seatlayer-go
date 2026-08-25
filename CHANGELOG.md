@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+- Documentation only. Refreshes the README, adds frequently asked
+  questions, and aligns package metadata. No API or behaviour changes.
+
 ## 0.6.0 — 2026-08-23
 
 - Added exact immutable Event configuration binding reads and compare-and-set

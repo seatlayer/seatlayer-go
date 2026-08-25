@@ -1,10 +1,19 @@
-# SeatLayer Go SDK
+# SeatLayer Go Server SDK for Reserved Seating
 
 [![CI](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml/badge.svg)](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/seatlayer/seatlayer-go.svg)](https://pkg.go.dev/github.com/seatlayer/seatlayer-go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827.svg)](LICENSE)
 
-Official Go server SDK for the [SeatLayer](https://seatlayer.io) reserved-seating API.
+The official SeatLayer Go server SDK is the **trusted side** of a reserved-seating
+integration: inspect the holds a buyer created, price from server data, and book with a
+stable `BookingRef`. From Go you manage seating charts, events, sales channels, and live
+seat inventory through one typed ticketing API client.
+
+[SeatLayer module on pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) ·
+[SeatLayer server SDK documentation](https://docs.seatlayer.io/server-sdk/install/) ·
+[SeatLayer reserved-seating platform](https://seatlayer.io/) ·
+[SeatLayer JavaScript seat map SDK](https://www.npmjs.com/package/@seatlayer/js) ·
+[SeatLayer AI Toolkit](https://github.com/seatlayer/seatlayer-ai-toolkit)
 
 > **Server-side only.** This package authenticates with your secret key. Never embed it in
 > anything a ticket buyer can reach — browser surfaces get short-lived, origin-bound tokens that
@@ -13,10 +22,12 @@ Official Go server SDK for the [SeatLayer](https://seatlayer.io) reserved-seatin
 ## Install
 
 ```bash
-go get github.com/seatlayer/seatlayer-go
+go get github.com/seatlayer/seatlayer-go@v0.6.0
 ```
 
-Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies** — standard library
+The module resolves straight from this repository through the Go module proxy, so there is no
+registry account to create; `v0.6.0` is the current release and the API reference is published on
+[pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go). Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies** — standard library
 only.
 
 ## Quick start
@@ -347,6 +358,42 @@ client.Do(ctx, http.MethodPost, "/v1/events/ev_1/some-new-route", nil, map[strin
 
 Full reference: [docs.seatlayer.io/server-sdk](https://docs.seatlayer.io/server-sdk/install/)
 
+## Frequently asked questions
+
+### How do I book seats from Go?
+
+Add the [`github.com/seatlayer/seatlayer-go` module](https://pkg.go.dev/github.com/seatlayer/seatlayer-go),
+construct a client with `seatlayer.New` and your secret key, and call `client.Inventory.Book` with
+the hold id and a stable `BookingRef`. When your own backend picks the seats — phone orders, box
+office, comps — `Inventory.BookBestAvailable` and `Inventory.BoxOfficeBook` book outright with no
+prior hold. A booking reference is required on every booking call, so each sale is tied to an
+immutable order id you can reconcile against later.
+
+### What does the server SDK do that the buyer SDK does not?
+
+The buyer SDK runs in the browser or mobile app and only **selects and holds** seats. This Go SDK
+runs on your trusted server and **inspects and books** them. Your secret key never reaches a buyer
+surface: browsers receive short-lived, origin-bound tokens minted here through
+`Sessions.CreateManageSession` or `Channels.CreateBuyerAccessSession`. Always price a sale from
+`Inventory.RetrieveHold`, never from values the browser sent you.
+
+### How do temporary seat holds work server-side?
+
+A hold reserves seats against concurrent buyers for a limited checkout window. From Go you
+retrieve it with `Inventory.RetrieveHold`, whose items and currency are authoritative for pricing,
+and confirm it with `Inventory.Book`. Use `Inventory.ExtendHold` for a long checkout instead of
+releasing and re-holding, which would hand the seats to whoever is racing for them. Booking is a
+single automatic attempt: after an unknown network outcome you may reconcile and repeat the exact
+same event, hold, and `BookingRef` — seats already booked under that reference are not sold again.
+
+### Can I use my own payment provider?
+
+Yes. SeatLayer never processes payment. Charge through Stripe, Adyen, Braintree, or any provider
+you already use, calculating the total from the server-inspected hold items rather than from
+client input, then call `Inventory.Book` with your charge or order id as the `BookingRef`. The
+[holds and checkout guide](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) walks through
+the full handoff.
+
 ## Related resources
 
 - [Server SDK guide](https://docs.seatlayer.io/server-sdk/install/)
@@ -357,23 +404,24 @@ Full reference: [docs.seatlayer.io/server-sdk](https://docs.seatlayer.io/server-
 - [Agent-readable documentation](https://docs.seatlayer.io/llms.txt)
 - [SeatLayer GitHub organization](https://github.com/seatlayer)
 
-### Other SeatLayer SDKs
+## SeatLayer SDK ecosystem
 
-| Surface | Package |
+| Surface | Package or source |
 |---|---|
-| Browser (vanilla) | [`@seatlayer/js`](https://www.npmjs.com/package/@seatlayer/js) |
+| JavaScript | [`@seatlayer/js`](https://www.npmjs.com/package/@seatlayer/js) |
 | React | [`@seatlayer/react`](https://www.npmjs.com/package/@seatlayer/react) |
 | React Native | [`@seatlayer/react-native`](https://www.npmjs.com/package/@seatlayer/react-native) |
 | iOS | [`seatlayer-ios`](https://github.com/seatlayer/seatlayer-ios) |
-| Android | [`seatlayer-android`](https://github.com/seatlayer/seatlayer-android) |
 | Flutter | [`seatlayer`](https://pub.dev/packages/seatlayer) |
+| Android | [`seatlayer-android`](https://github.com/seatlayer/seatlayer-android) |
+| Server SDKs | [Node.js, Python, PHP, Ruby, .NET, Java, and Go](https://docs.seatlayer.io/server-sdk/install/) |
 | Node.js (server) | [`@seatlayer/server`](https://www.npmjs.com/package/@seatlayer/server) |
 | Python (server) | [`seatlayer`](https://pypi.org/project/seatlayer/) |
 | PHP (server) | [`seatlayer/seatlayer-php`](https://packagist.org/packages/seatlayer/seatlayer-php) |
-| Java (server) | [`io.seatlayer:seatlayer-java`](https://central.sonatype.com/artifact/io.seatlayer/seatlayer-java) |
-| Go (server) | [`github.com/seatlayer/seatlayer-go`](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) |
 | Ruby (server) | [`seatlayer`](https://rubygems.org/gems/seatlayer) |
 | .NET (server) | [`SeatLayer`](https://www.nuget.org/packages/SeatLayer) |
+| Java (server) | [`io.seatlayer:seatlayer-java`](https://central.sonatype.com/artifact/io.seatlayer/seatlayer-java) |
+| Go (server) | [`github.com/seatlayer/seatlayer-go`](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) (this module) |
 
 ## Development
 

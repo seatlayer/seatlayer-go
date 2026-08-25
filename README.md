@@ -394,15 +394,22 @@ client input, then call `Inventory.Book` with your charge or order id as the `Bo
 [holds and checkout guide](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) walks through
 the full handoff.
 
-## Related resources
+## Continue your Go integration
 
-- [Server SDK guide](https://docs.seatlayer.io/server-sdk/install/)
-- [Errors, retries and idempotency](https://docs.seatlayer.io/server-sdk/reliability/)
-- [Webhook verification](https://docs.seatlayer.io/server-sdk/webhooks/)
-- [Server API reference](https://docs.seatlayer.io/server-api/events/)
-- [OpenAPI description](https://docs.seatlayer.io/openapi.json)
-- [Agent-readable documentation](https://docs.seatlayer.io/llms.txt)
-- [SeatLayer GitHub organization](https://github.com/seatlayer)
+- [Follow the SeatLayer server SDK guide](https://docs.seatlayer.io/server-sdk/install/)
+  for installation, authentication, and the full hold-to-booking flow.
+- [Handle errors, retries, and safe booking repeats](https://docs.seatlayer.io/server-sdk/reliability/)
+  before connecting a production order flow.
+- [Verify SeatLayer webhooks](https://docs.seatlayer.io/server-sdk/webhooks/)
+  to react to holds, expiry, and bookings on your server.
+- [Browse the SeatLayer server API reference](https://docs.seatlayer.io/server-api/events/)
+  for every endpoint behind this SDK.
+- [Generate clients from the SeatLayer OpenAPI description](https://docs.seatlayer.io/openapi.json)
+  or explore the raw API surface.
+- [Point AI coding agents at the SeatLayer docs index](https://docs.seatlayer.io/llms.txt)
+  (`llms.txt`) for an agent-readable map of the documentation.
+- [Explore every SeatLayer SDK on GitHub](https://github.com/seatlayer)
+  across web, mobile, and server.
 
 ## SeatLayer SDK ecosystem
 

@@ -87,11 +87,10 @@ treated as a transient fault to back off through.
 
 ## Test vs live
 
-## Fixed Renewable Seasons (unpublished candidate)
+## Fixed Renewable Seasons
 
-The source candidate exposes all 48 trusted organizer operations through
-`client.Seasons`. It is not part of a published module tag and does not make a
-production-support claim.
+Version `v0.7.0` exposes all 48 trusted organizer operations through
+`client.Seasons`.
 
 After the test hold/book/cancel journey and matching webhook deliveries,
 `client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)` sends no evidence body;

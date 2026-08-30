@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Added source-candidate coverage for all 48 Fixed Renewable Season server
+  operations under `Client.Seasons`, with exact path encoding and
+  operation-specific retry/idempotency behavior. No module tag has been published.
+- Season allocations are identity-only and the API response declares host
+  pricing authority. Buyer rehearsal validation sends no evidence body because
+  SeatLayer discovers the retained hold, booking, cancellation, and delivered
+  webhook chain automatically.
+
 ## 0.6.1
 
 - Documentation only. Refreshes the README, adds frequently asked

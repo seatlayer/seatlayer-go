@@ -59,6 +59,7 @@ type Client struct {
 	Events            *EventsService
 	Inventory         *InventoryService
 	PerformanceGroups *PerformanceGroupsService
+	Seasons           *SeasonsService
 	Sessions          *SessionsService
 	Templates         *TemplatesService
 	Webhooks          *WebhooksService
@@ -137,6 +138,7 @@ func New(secretKey string, options ...Option) (*Client, error) {
 	client.Events = &EventsService{client: client}
 	client.Inventory = &InventoryService{client: client}
 	client.PerformanceGroups = &PerformanceGroupsService{client: client}
+	client.Seasons = &SeasonsService{client: client}
 	client.Sessions = &SessionsService{client: client}
 	client.Templates = &TemplatesService{client: client}
 	client.Webhooks = &WebhooksService{client: client}
@@ -319,6 +321,12 @@ func (c *Client) postHeaderReplay(
 	ctx context.Context, path string, body any, idempotencyKey string,
 ) (map[string]any, error) {
 	return c.do(ctx, http.MethodPost, path, nil, body, idempotencyKey, true)
+}
+
+func (c *Client) mutationHeaderReplay(
+	ctx context.Context, method, path string, body any, idempotencyKey string,
+) (map[string]any, error) {
+	return c.do(ctx, method, path, nil, body, idempotencyKey, true)
 }
 
 func (c *Client) put(ctx context.Context, path string, body any) (map[string]any, error) {

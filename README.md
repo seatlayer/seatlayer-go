@@ -11,7 +11,7 @@ seat inventory through one typed ticketing API client.
 
 [SeatLayer module on pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) ·
 [SeatLayer server SDK documentation](https://docs.seatlayer.io/server-sdk/install/) ·
-[SeatLayer reserved-seating platform](https://seatlayer.io/) ·
+[SeatLayer developer platform](https://seatlayer.io/developers/) ·
 [SeatLayer JavaScript seat map SDK](https://www.npmjs.com/package/@seatlayer/js) ·
 [SeatLayer AI Toolkit](https://github.com/seatlayer/seatlayer-ai-toolkit)
 
@@ -86,6 +86,35 @@ Every method takes a `context.Context`. Cancelling it stops retries immediately 
 treated as a transient fault to back off through.
 
 ## Test vs live
+
+## Fixed Renewable Seasons (unpublished candidate)
+
+The source candidate exposes all 48 trusted organizer operations through
+`client.Seasons`. It is not part of a published module tag and does not make a
+production-support claim.
+
+After the test hold/book/cancel journey and matching webhook deliveries,
+`client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)` sends no evidence body;
+SeatLayer discovers the retained chain automatically. Retrieved Season holds
+contain inventory identity, not an authoritative amount—your platform owns
+package price, payment, order, tax, refunds, benefits, and ticket or pass delivery.
+
+```go
+checked, err := client.Seasons.Validate(ctx, seatlayer.SeasonSelectionParams{
+    SourcePerformanceGroupKeys: []string{"pg_subscription_run"},
+})
+created, err := client.Seasons.Create(ctx, seatlayer.SeasonCreateParams{
+    Name: "2027 subscription",
+    SourcePerformanceGroupKeys: []string{"pg_subscription_run"},
+    IdempotencyKey: "season-create-2027",
+})
+```
+
+Treat `202` as accepted work and poll `RetrieveLifecycle` with the returned
+operation identity. Buyer-session minting and domain-exact booking,
+cancellation, and renewal actions remain single-attempt; only declared
+header-replay catalogue mutations retry automatically.
+
 
 Keys carry their own mode. `sk_test_…` keys can only touch test-mode events and `sk_live_…` only
 live ones; crossing them returns `403 mode_mismatch`.

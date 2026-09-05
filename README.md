@@ -4,29 +4,29 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/seatlayer/seatlayer-go.svg)](https://pkg.go.dev/github.com/seatlayer/seatlayer-go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827.svg)](LICENSE)
 
-The official SeatLayer Go server SDK is the **trusted side** of a reserved-seating
-integration: inspect the holds a buyer created, price from server data, and book with a
-stable `BookingRef`. From Go you manage seating charts, events, sales channels, and live
-seat inventory through one typed ticketing API client.
+SeatLayer's official Go server SDK is the **trusted side** of its reserved seating and seat
+booking API: inspect the holds a buyer created, price from server data, and book with a stable
+`BookingRef`. From Go you manage seating charts, events, sales channels, and live seat inventory
+through one typed ticketing API client.
 
 [SeatLayer module on pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) ·
-[SeatLayer server SDK documentation](https://docs.seatlayer.io/server-sdk/install/) ·
+[Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/) ·
 [SeatLayer developer platform](https://seatlayer.io/developers/) ·
 [SeatLayer JavaScript seat map SDK](https://www.npmjs.com/package/@seatlayer/js) ·
-[SeatLayer AI Toolkit](https://github.com/seatlayer/seatlayer-ai-toolkit)
+[Server API reference](https://docs.seatlayer.io/server-api/events/)
 
 > **Server-side only.** This package authenticates with your secret key. Never embed it in
 > anything a ticket buyer can reach — browser surfaces get short-lived, origin-bound tokens that
 > you mint here.
 
-## Install
+## Install the Go seat booking SDK
 
 ```bash
-go get github.com/seatlayer/seatlayer-go@v0.6.0
+go get github.com/seatlayer/seatlayer-go@v0.7.0
 ```
 
 The module resolves straight from this repository through the Go module proxy, so there is no
-registry account to create; `v0.6.0` is the current release and the API reference is published on
+registry account to create; `v0.7.0` is the current release and the API reference is published on
 [pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go). Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies** — standard library
 only.
 
@@ -47,7 +47,8 @@ if err != nil {
 ctx := context.Background()
 
 // 1. Materialize a published catalog template as the organiser's draft chart.
-chart, err := client.Templates.InstantiateTemplate(ctx, "arena")
+// Replace this placeholder with a template id from your catalog.
+chart, err := client.Templates.InstantiateTemplate(ctx, "your-published-template")
 if err != nil {
     return err
 }
@@ -85,8 +86,6 @@ the `Nullable` overlay when the wire call must contain an explicit JSON null, fo
 Every method takes a `context.Context`. Cancelling it stops retries immediately rather than being
 treated as a transient fault to back off through.
 
-## Test vs live
-
 ## Fixed Renewable Seasons
 
 Version `v0.7.0` exposes all 48 trusted organizer operations through
@@ -114,6 +113,7 @@ operation identity. Buyer-session minting and domain-exact booking,
 cancellation, and renewal actions remain single-attempt; only declared
 header-replay catalogue mutations retry automatically.
 
+## Test vs live
 
 Keys carry their own mode. `sk_test_…` keys can only touch test-mode events and `sk_live_…` only
 live ones; crossing them returns `403 mode_mismatch`.
@@ -131,14 +131,34 @@ if os.Getenv("ENV") == "production" && client.Mode() != "live" {
 A publishable `pk_` key is rejected by `New` with a message naming the mistake, rather than
 failing as a `401` three round-trips later.
 
-## The two selling flows
+## Book reserved seats from Go
 
 **Buyer picks seats in the browser.** Your frontend holds them; your backend confirms the price and
 books. Never price from what the browser sent you — `RetrieveHold` is authoritative.
 
 ```go
+import "errors"
+
 hold, err := client.Inventory.RetrieveHold(ctx, eventKey, holdID)
-// … charge from hold.Items, whose UnitPrice and Currency are authoritative …
+if err != nil {
+    return err
+}
+if len(hold.Items) == 0 {
+    return errors.New("hold has no items")
+}
+currency := hold.Items[0].Currency
+total := 0.0
+for _, item := range hold.Items {
+    if item.Currency != currency {
+        return errors.New("a hold must use one currency")
+    }
+    quantity := 1
+    if item.Quantity != nil {
+        quantity = *item.Quantity
+    }
+    total += item.UnitPrice * float64(quantity)
+}
+// … charge `total` in `currency` …
 _, err = client.Inventory.Book(ctx, eventKey, seatlayer.BookParams{
     HoldID: holdID, BookingRef: charge.ID,
 })
@@ -249,8 +269,9 @@ session, err := client.Sessions.CreateManageSession(ctx, eventKey, seatlayer.Man
 
 `Capabilities` is **required** by this SDK even though the raw API safely defaults an omitted list
 to view-only (`event:view`). Keeping the field required makes browser authority visible at every
-call site. Grant the smallest set the page needs. The constants also cover channel management and
-SeatLayer-managed orders, refunds, ticket delivery, door, and box-office capabilities.
+call site. Grant the smallest set the page needs. For Platform/SDK events, `event:cancel` returns a
+booking's inventory to sale but does not move gateway money. The Managed commerce constants cover
+eligible Managed Ticketing orders, refunds, ticket delivery, door, and box-office capabilities.
 
 Designer minting returns a `DesignerSessionEnvelope`; the token and the effective safe-mode and
 feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mode: "safe"`.
@@ -335,17 +356,18 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Automatic mutation retries are limited to the five
-operations backed by exact response replay: `Charts.Create`, `Charts.Copy`,
-`Templates.InstantiateTemplate`, `Events.Create`, and `Workspaces.Create`. Other mutations,
-including ticket-release changes, stay single-attempt. Other 4xx responses are never retried.
+`Retry-After` wins when the server sends it. Fourteen mutations use exact header replay:
+`Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
+`Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
+`Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.DuplicateToLive`, `Seasons.CreateHolderImport`,
+`Seasons.CreateRenewalOffers`, and `Seasons.CreateAmendment`. Other 4xx responses are never retried.
 
-**Idempotency.** Those five replay-backed operations carry an `Idempotency-Key`, generated when you
-do not supply one and reused across attempts. Other mutations are single-attempt and receive no
-automatic key. A caller-supplied key is forwarded but does not enable retries. This includes
-inventory holds and bookings, show-once credential or secret creation, unsupported operations, and
-raw `Do` mutations. Keep `BookingRef` in the booking body for reconciliation, but handle an unknown
-network outcome explicitly instead of automatically repeating the sale.
+**Idempotency.** Those 14 replay-backed operations carry an `Idempotency-Key`, generated when you
+do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
+have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
+includes inventory holds and bookings, show-once credential or secret creation, unsupported
+operations, and raw `Do` mutations. Keep `BookingRef` in the booking body for reconciliation, but
+handle an unknown network outcome explicitly instead of automatically repeating the sale.
 
 ```go
 client.Events.Create(ctx, seatlayer.EventCreateParams{
@@ -374,17 +396,24 @@ client.Do(ctx, http.MethodPost, "/v1/events/ev_1/some-new-route", nil, map[strin
 
 ## API surface
 
+The client exposes these services. Performance Groups cover runs, sessions, holds, and bookings;
+Seasons cover catalogue, plan, sales, buyer-session, booking, renewal, occurrence, reporting,
+outbox, and support operations.
+
 | Service | Methods |
 | --- | --- |
 | `Charts` | `List` `All` `Create` `Retrieve` `Update` `Delete` `Copy` `Archive` `Unarchive` `Publish` |
-| `Events` | `List` `All` `Create` `Retrieve` `RetrieveConfigurationBinding` `UpdateConfigurationBinding` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
+| `Templates` | `InstantiateTemplate` |
+| `Events` | `List` `All` `Create` `Retrieve` `RetrieveConfigurationBinding` `UpdateConfigurationBinding` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `ListTicketReleases` `UpdateTicketReleases` `CloseTicketRelease` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
 | `Channels` | `ListChannels` `CreateChannel` `UpdateChannel` `UpdateAssignments` `ListAllocation` `RetrieveAccessPreview` `RetrieveReport` `Pause` `Unpause` `Archive` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `CreateAccessLink` `ListAccessLinks` `RotateAccessLink` `RevokeAccessLink` |
 | `Inventory` | `Hold` `HoldBestAvailable` `BookBestAvailable` `ExtendHold` `RetrieveHold` `Release` `Book` `BoxOfficeBook` `Unbook` `Block` `Unblock` `UnblockAll` `RetrieveAvailability` `UpdateAvailability` `ListBookings` `RetrieveBooking` |
 | `Sessions` | `CreateManageSession` `RevokeManageSession` `CreateDesignerSession` `RevokeDesignerSession` |
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |
 | `Workspaces` | `List` `Create` `Retrieve` `Update` |
+| `PerformanceGroups` | `List` `Create` `Retrieve` `Delete` `Activate` `Close` `RetrieveLifecycle` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `RetrieveHold` `BookHold` `RetrieveBooking` |
+| `Seasons` | 48 operations for catalogue and Plan lifecycle, sales windows, buyer access and booking, holder imports, renewals, occurrence amendments, reports, audit, outbox, and support export |
 
-Full reference: [docs.seatlayer.io/server-sdk](https://docs.seatlayer.io/server-sdk/install/)
+Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
 
 ## Frequently asked questions
 
@@ -408,23 +437,25 @@ surface: browsers receive short-lived, origin-bound tokens minted here through
 ### How do temporary seat holds work server-side?
 
 A hold reserves seats against concurrent buyers for a limited checkout window. From Go you
-retrieve it with `Inventory.RetrieveHold`, whose items and currency are authoritative for pricing,
-and confirm it with `Inventory.Book`. Use `Inventory.ExtendHold` for a long checkout instead of
-releasing and re-holding, which would hand the seats to whoever is racing for them. Booking is a
-single automatic attempt: after an unknown network outcome you may reconcile and repeat the exact
-same event, hold, and `BookingRef` — seats already booked under that reference are not sold again.
+retrieve it with `Inventory.RetrieveHold`, whose item-level price, quantity, and currency are
+authoritative, and confirm it with `Inventory.Book`. Use `Inventory.ExtendHold` for a long checkout
+instead of releasing and re-holding, which would hand the seats to whoever is racing for them.
+Booking is a single automatic attempt: after an unknown network outcome you may reconcile and
+repeat the exact same event, hold, and `BookingRef` — seats already booked under that reference are
+not sold again.
 
 ### Can I use my own payment provider?
 
-Yes. SeatLayer never processes payment. Charge through Stripe, Adyen, Braintree, or any provider
-you already use, calculating the total from the server-inspected hold items rather than from
-client input, then call `Inventory.Book` with your charge or order id as the `BookingRef`. The
-[holds and checkout guide](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) walks through
-the full handoff.
+Yes. This server SDK does not process payment in a Platform/SDK integration. Charge through the
+provider you already use, calculating the total from each server-inspected hold item's
+`UnitPrice`, `Quantity`, and `Currency`, then call `Inventory.Book` with your charge or order id as
+the `BookingRef`. Managed Ticketing is a separate product path with organizer-connected payments.
+The [holds and checkout guide](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) walks
+through the full handoff.
 
 ## Continue your Go integration
 
-- [Follow the SeatLayer server SDK guide](https://docs.seatlayer.io/server-sdk/install/)
+- [Follow the Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
   for installation, authentication, and the full hold-to-booking flow.
 - [Handle errors, retries, and safe booking repeats](https://docs.seatlayer.io/server-sdk/reliability/)
   before connecting a production order flow.

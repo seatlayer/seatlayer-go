@@ -61,6 +61,8 @@ if _, err := client.Charts.Publish(ctx, chartID); err != nil {
 event, err := client.Events.Create(ctx, seatlayer.EventCreateParams{
     ChartID: chartID,
     Name:    "Spring Gala",
+    Currency: "EUR",  // leave empty to inherit the workspace currency
+    Region:  seatlayer.RegionWesternEurope, // India: RegionAsiaPacific
 })
 if err != nil {
     return err
@@ -78,6 +80,20 @@ _, err = client.Inventory.Book(ctx, eventKey, seatlayer.BookParams{
     BookingRef: "order-8842",
 })
 ```
+
+## Event hosting region
+
+Set `EventCreateParams.Region` based on the **event venue**, not your API server or office. It
+controls the initial placement of the Event's live inventory; an existing Event
+cannot be moved later. Leave it empty to inherit the workspace default (`western-europe` for new accounts).
+Set the default through `WorkspaceCreateParams.DefaultRegion` or
+`UpdateWithParams(..., WorkspaceUpdateParams{DefaultRegion: ...})`; updates affect only future Events.
+
+- `western-europe`, `eastern-europe`, `north-america-east`, `north-america-west`, `south-america`
+- `asia-pacific`, `northeast-asia`, `southeast-asia`, `oceania`, `africa`, `middle-east`
+
+The hint is best effort, not a data-residency guarantee. See the
+[full Event region guide](https://docs.seatlayer.io/server-api/event-regions/).
 
 For nullable event-create fields, ordinary scalar fields cover the common value-or-omit case. Use
 the `Nullable` overlay when the wire call must contain an explicit JSON null, for example

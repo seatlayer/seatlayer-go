@@ -16,7 +16,15 @@ func (s *WorkspacesService) List(ctx context.Context) (map[string]any, error) {
 type WorkspaceCreateParams struct {
 	Name           string
 	ExternalRef    NullableField[string]
+	DefaultRegion  EventHostingRegion
 	IdempotencyKey string
+}
+
+// WorkspaceUpdateParams supplies typed workspace fields. A zero region leaves
+// the current default unchanged.
+type WorkspaceUpdateParams struct {
+	Name          string
+	DefaultRegion EventHostingRegion
 }
 
 // Create provisions a workspace with exact nullable wire semantics.
@@ -24,6 +32,9 @@ func (s *WorkspacesService) Create(
 	ctx context.Context, p WorkspaceCreateParams,
 ) (map[string]any, error) {
 	body := params("name", p.Name)
+	if p.DefaultRegion != "" {
+		body["defaultRegion"] = string(p.DefaultRegion)
+	}
 	if value, present := p.ExternalRef.requestValue(); present {
 		body["externalRef"] = value
 	}
@@ -43,4 +54,19 @@ func (s *WorkspacesService) Update(
 	ctx context.Context, workspaceID string, fields map[string]any,
 ) (map[string]any, error) {
 	return s.client.patch(ctx, "/v1/workspaces/"+escape(workspaceID), fields)
+}
+
+// UpdateWithParams changes typed workspace settings, including the default
+// used only by Events created after the update.
+func (s *WorkspacesService) UpdateWithParams(
+	ctx context.Context, workspaceID string, p WorkspaceUpdateParams,
+) (map[string]any, error) {
+	body := map[string]any{}
+	if p.Name != "" {
+		body["name"] = p.Name
+	}
+	if p.DefaultRegion != "" {
+		body["defaultRegion"] = string(p.DefaultRegion)
+	}
+	return s.Update(ctx, workspaceID, body)
 }

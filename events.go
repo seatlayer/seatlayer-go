@@ -11,6 +11,23 @@ import (
 // EventsService covers event lifecycle, metadata and reports.
 type EventsService struct{ client *Client }
 
+// EventHostingRegion is a provider-neutral Event inventory placement preference.
+type EventHostingRegion string
+
+const (
+	RegionWesternEurope    EventHostingRegion = "western-europe"
+	RegionEasternEurope    EventHostingRegion = "eastern-europe"
+	RegionNorthAmericaEast EventHostingRegion = "north-america-east"
+	RegionNorthAmericaWest EventHostingRegion = "north-america-west"
+	RegionSouthAmerica     EventHostingRegion = "south-america"
+	RegionAsiaPacific      EventHostingRegion = "asia-pacific"
+	RegionNortheastAsia    EventHostingRegion = "northeast-asia"
+	RegionSoutheastAsia    EventHostingRegion = "southeast-asia"
+	RegionOceania          EventHostingRegion = "oceania"
+	RegionAfrica           EventHostingRegion = "africa"
+	RegionMiddleEast       EventHostingRegion = "middle-east"
+)
+
 // EventListParams filters and pages an event listing.
 type EventListParams struct {
 	WorkspaceID string
@@ -85,6 +102,8 @@ type EventCreateParams struct {
 	Timezone      string
 	Locale        string
 	PosterAssetID string
+	// Region places live inventory near the venue. Empty defaults to Western Europe.
+	Region EventHostingRegion
 	// Mode is normally inferred from the secret key; when supplied it must match.
 	Mode           string
 	IdempotencyKey string
@@ -109,6 +128,7 @@ func (s *EventsService) Create(ctx context.Context, p EventCreateParams) (map[st
 		"locale", stringOrNil(p.Locale),
 		"posterAssetId", stringOrNil(p.PosterAssetID),
 		"mode", stringOrNil(p.Mode),
+		"region", stringOrNil(string(p.Region)),
 	)
 	p.Nullable.apply(body)
 	return s.client.postHeaderReplay(ctx, "/v1/events", body, p.IdempotencyKey)

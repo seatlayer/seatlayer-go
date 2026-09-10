@@ -778,7 +778,7 @@ func TestAPI02WireContractFields(t *testing.T) {
 
 	_, _ = client.Events.Create(context.Background(), EventCreateParams{
 		ChartID: "c_1", Description: "Matinee", EndsAt: 1800,
-		Timezone: "Asia/Kolkata", Locale: "en-IN", PosterAssetID: "ast_1",
+		Timezone: "Asia/Kolkata", Locale: "en-IN", PosterAssetID: "ast_1", Region: RegionAsiaPacific,
 		Nullable: EventCreateNullableFields{Venue: FieldNull[string]()},
 	})
 	acknowledge := true
@@ -799,7 +799,7 @@ func TestAPI02WireContractFields(t *testing.T) {
 	var createBody map[string]any
 	_ = json.Unmarshal([]byte(call(t, calls, 0).body), &createBody)
 	if createBody["venue"] != nil || createBody["description"] != "Matinee" ||
-		createBody["posterAssetId"] != "ast_1" ||
+		createBody["posterAssetId"] != "ast_1" || createBody["region"] != "asia-pacific" ||
 		createBody["endsAt"] != float64(1800) {
 		t.Fatalf("event create body = %v", createBody)
 	}

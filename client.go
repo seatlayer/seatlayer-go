@@ -23,12 +23,14 @@
 //
 //   - API reference: https://docs.seatlayer.io/openapi.json
 //
-//     client, err := seatlayer.New(os.Getenv("SEATLAYER_SECRET_KEY"))
-//     if err != nil {
-//     return err
-//     }
-//     held, err := client.Inventory.HoldBestAvailable(ctx, "summer-gala",
-//     seatlayer.BestAvailableParams{Qty: 4})
+// A minimal server-side hold:
+//
+//	client, err := seatlayer.New(os.Getenv("SEATLAYER_SECRET_KEY"))
+//	if err != nil {
+//		return err
+//	}
+//	held, err := client.Inventory.HoldBestAvailable(ctx, "summer-gala",
+//		seatlayer.BestAvailableParams{Qty: 4})
 package seatlayer
 
 import (

@@ -6,9 +6,18 @@
 // surface selects and holds seats; this package inspects the hold, prices it
 // from server data, and books it with a stable booking reference.
 //
+// SeatLayer is interactive seating chart software built for stadium scale.
+// Platforms embed the white-label seat picker with their own checkout;
+// organizers sell seated events on their own website with their own payment
+// gateway.
+//
 // Server-side only: this package authenticates with your secret key. Never
-// embed it in anything a ticket buyer can reach — browser surfaces get
+// embed it in anything a ticket buyer can reach. Browser surfaces get
 // short-lived, origin-bound tokens that you mint with Sessions.
+//
+// Quickstart: https://docs.seatlayer.io/start/quickstart/
+// Holds and checkout: https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/
+// API reference: https://docs.seatlayer.io/openapi.json
 //
 //	client, err := seatlayer.New(os.Getenv("SEATLAYER_SECRET_KEY"))
 //	if err != nil {

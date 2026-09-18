@@ -16,16 +16,19 @@
 // short-lived, origin-bound tokens that you mint with Sessions.
 //
 // Start here:
+//
 //   - Quickstart: https://docs.seatlayer.io/start/quickstart/
+//
 //   - Holds and checkout: https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/
+//
 //   - API reference: https://docs.seatlayer.io/openapi.json
 //
-//	client, err := seatlayer.New(os.Getenv("SEATLAYER_SECRET_KEY"))
-//	if err != nil {
-//		return err
-//	}
-//	held, err := client.Inventory.HoldBestAvailable(ctx, "summer-gala",
-//		seatlayer.BestAvailableParams{Qty: 4})
+//     client, err := seatlayer.New(os.Getenv("SEATLAYER_SECRET_KEY"))
+//     if err != nil {
+//     return err
+//     }
+//     held, err := client.Inventory.HoldBestAvailable(ctx, "summer-gala",
+//     seatlayer.BestAvailableParams{Qty: 4})
 package seatlayer
 
 import (

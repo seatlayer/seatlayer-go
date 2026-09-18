@@ -15,9 +15,10 @@
 // embed it in anything a ticket buyer can reach. Browser surfaces get
 // short-lived, origin-bound tokens that you mint with Sessions.
 //
-// Quickstart: https://docs.seatlayer.io/start/quickstart/
-// Holds and checkout: https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/
-// API reference: https://docs.seatlayer.io/openapi.json
+// Start here:
+//   - Quickstart: https://docs.seatlayer.io/start/quickstart/
+//   - Holds and checkout: https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/
+//   - API reference: https://docs.seatlayer.io/openapi.json
 //
 //	client, err := seatlayer.New(os.Getenv("SEATLAYER_SECRET_KEY"))
 //	if err != nil {

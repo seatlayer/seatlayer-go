@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.7.0 — 2026-08-30
+## 0.8.0 (2026-09-10)
+
+- Added Event hosting regions: `EventCreateParams.Region` with the
+  `EventHostingRegion` constants, `WorkspaceCreateParams.DefaultRegion`, and
+  `Workspaces.UpdateWithParams` for changing the default used by future Events.
+
+## 0.7.0 (2026-08-30)
 
 - Added coverage for all 48 Fixed Renewable Season server
   operations under `Client.Seasons`, with exact path encoding and
@@ -15,13 +21,13 @@
 - Documentation only. Refreshes the README, adds frequently asked
   questions, and aligns package metadata. No API or behaviour changes.
 
-## 0.6.0 — 2026-08-23
+## 0.6.0 (2026-08-23)
 
 - Added exact immutable Event configuration binding reads and compare-and-set
   attach/detach through `Events.RetrieveConfigurationBinding` and
   `Events.UpdateConfigurationBinding`. Updates remain deliberately single-attempt.
 
-## v0.5.0 — 2026-08-21
+## v0.5.0 (2026-08-21)
 
 - Added `PerformanceGroups`, the trusted server service for fixed two-to-eight
   performance runs. It creates and activates groups, mints one-time browser
@@ -53,7 +59,7 @@
 - Added exact chart copy/metadata params, typed event-log pagination, and explicit-null helpers for
   buyer sessions, channel archive destinations, and workspace creation.
 
-## v0.2.0 — 2026-08-12
+## v0.2.0 (2026-08-12)
 
 - Added channel allocation management and origin-bound buyer access sessions.
 - Added channel-aware hold and booking controls, including explicit privileged override reasons.
@@ -61,7 +67,7 @@
 - Booking and cancellation calls now reject missing or blank stable booking references.
 - Expanded the README with private-sale guidance and direct links across the SeatLayer SDK family.
 
-## v0.1.0 — unreleased
+## v0.1.0 (unreleased)
 
 First release of the SeatLayer Go server SDK.
 
@@ -76,7 +82,7 @@ First release of the SeatLayer Go server SDK.
 - Typed errors reachable with `errors.As`: `AuthError` (with `ModeMismatch()`),
   `ConflictError` (with `Conflicts()` and `SoldOut()`), `RateLimitError`,
   `ValidationError`, `NotFoundError`, `ConnectionError` (which unwraps).
-- `VerifyWebhook` — raw-body HMAC-SHA256 verification via `hmac.Equal`; errors wrap
+- `VerifyWebhook`: raw-body HMAC-SHA256 verification via `hmac.Equal`; errors wrap
   `ErrWebhookVerification` for `errors.Is`.
 - `CreateManageSession` requires explicit capabilities; the API's default grants
   `event:cancel`, which reverses paid bookings.
@@ -84,6 +90,6 @@ First release of the SeatLayer Go server SDK.
 - `New` returns an error on a `pk_` key rather than failing as a 401 later.
 - `All()` returns a range-over-func iterator (`iter.Seq2`), paging as you consume it,
   with page errors delivered alongside each item so they cannot be silently dropped.
-- Standard library only — no dependencies.
+- Standard library only, no dependencies.
 
 Requires Go 1.23 (for range-over-func iterators).

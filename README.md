@@ -4,7 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/seatlayer/seatlayer-go.svg)](https://pkg.go.dev/github.com/seatlayer/seatlayer-go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827.svg)](LICENSE)
 
-SeatLayer is interactive seating chart software built for stadium scale. Platforms embed the white-label seat picker with their own checkout; organizers sell seated events on their own website with their own payment gateway.
+The official Go client for the SeatLayer API. This module lets a Go backend inspect seat holds, price orders from server data, book reserved seats and verify webhooks, with no dependencies beyond the standard library. SeatLayer is seating chart and reserved-seat ticketing software built for venues up to stadium scale.
 
 SeatLayer's official Go server SDK is the **trusted side** of its reserved seating and seat
 booking API: inspect the holds a buyer created, price from server data, and book with a stable
@@ -32,12 +32,12 @@ Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 S
 ## Install the Go seat booking SDK
 
 ```bash
-go get github.com/seatlayer/seatlayer-go@v0.7.0
+go get github.com/seatlayer/seatlayer-go@v0.8.0
 ```
 
 The module resolves straight from this repository through the Go module proxy, so there is no
-registry account to create; `v0.7.0` is the current release and the API reference is published on
-[pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go). Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies** — standard library
+registry account to create; `v0.8.0` is the current release and the API reference is published on
+[pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go). Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies**: standard library
 only.
 
 ## Quick start
@@ -114,13 +114,12 @@ treated as a transient fault to back off through.
 
 ## Fixed Renewable Seasons
 
-Version `v0.7.0` exposes all 48 trusted organizer operations through
-`client.Seasons`.
+Since `v0.7.0`, `client.Seasons` exposes all 48 trusted organizer operations.
 
 After the test hold/book/cancel journey and matching webhook deliveries,
 `client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)` sends no evidence body;
 SeatLayer discovers the retained chain automatically. Retrieved Season holds
-contain inventory identity, not an authoritative amount—your platform owns
+contain inventory identity, not an authoritative amount. Your platform owns
 package price, payment, order, tax, refunds, benefits, and ticket or pass delivery.
 
 ```go
@@ -160,7 +159,7 @@ failing as a `401` three round-trips later.
 ## Book reserved seats from Go
 
 **Buyer picks seats in the browser.** Your frontend holds them; your backend confirms the price and
-books. Never price from what the browser sent you — `RetrieveHold` is authoritative.
+books. Never price from what the browser sent you: `RetrieveHold` is authoritative.
 
 ```go
 import "errors"
@@ -193,7 +192,7 @@ _, err = client.Inventory.Book(ctx, eventKey, seatlayer.BookParams{
 **Your backend picks the seats.** Phone orders, box office, comps.
 
 ```go
-// Payment already taken — book outright, so nothing is stranded if a second call fails.
+// Payment already taken: book outright, so nothing is stranded if a second call fails.
 _, err := client.Inventory.BookBestAvailable(ctx, eventKey, seatlayer.BestAvailableParams{
     Qty: 2, BookingRef: "phone-1183",
 })
@@ -235,7 +234,7 @@ explicit privileged `IgnoreChannelRestrictions` flag, and an audit `Reason`.
 ## Listing and pagination
 
 `List` returns one `Page` plus a cursor. `All` is a range-over-func iterator that pages as you
-consume it — deliberately not a slice, because the point of paginating is to *not* hold an
+consume it. It is deliberately not a slice, because the point of paginating is to *not* hold an
 unbounded result set in memory.
 
 ```go
@@ -253,12 +252,12 @@ for event, err := range client.Events.All(ctx, nil) {
 }
 ```
 
-The error rides alongside each item so a failed page reaches you — an iterator that silently ended
+The error rides alongside each item so a failed page reaches you. An iterator that silently ended
 on error would look identical to a list that finished.
 
 Listing events includes live availability counts by default, which costs the server one round-trip
-**per event**. `All` drops them automatically — walking a whole catalogue is exactly when you don't
-want that — and you can control it explicitly:
+**per event**. `All` drops them automatically, since walking a whole catalogue is exactly when you don't
+want that, and you can control it explicitly:
 
 ```go
 client.Events.List(ctx, &seatlayer.EventListParams{Limit: 50, NoCounts: true})
@@ -266,7 +265,7 @@ client.Events.List(ctx, &seatlayer.EventListParams{Limit: 50, NoCounts: true})
 
 ## Keeping a hold alive
 
-When an order takes longer than the checkout window — an invoice, a phone sale — extend rather than
+When an order takes longer than the checkout window (an invoice, a phone sale), extend rather than
 release and re-hold. Releasing first hands the seats to whoever is racing for them in between.
 
 ```go
@@ -274,7 +273,7 @@ _, err := client.Inventory.ExtendHold(ctx, eventKey, holdID, 10*60*1000)
 
 var conflict *seatlayer.ConflictError
 if errors.As(err, &conflict) {
-    // Gone, expired, or at its renewal cap — the buyer has to re-pick.
+    // Gone, expired, or at its renewal cap: the buyer has to re-pick.
 }
 ```
 
@@ -309,7 +308,7 @@ returns `WebhookCreateEnvelope` with the show-once `Secret`, and `Update` return
 `WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the eight accepted event names and
 `WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
 
-Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes — in Go
+Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes. In Go
 specifically, `encoding/json` marshals map keys in sorted order while a real delivery arrives in
 the order we serialised it, so a round trip reorders it and verification fails.
 
@@ -332,7 +331,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
     }
 
     // The signed body carries "at", but nothing enforces a freshness window, so a
-    // captured delivery stays valid indefinitely. Deduplicate on occurrenceId —
+    // captured delivery stays valid indefinitely. Deduplicate on occurrenceId:
     // this is your replay protection, not an optimisation.
     if alreadyProcessed(event["occurrenceId"].(string)) {
         w.WriteHeader(http.StatusOK)
@@ -346,7 +345,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 ## Errors
 
-Errors are values here, not exceptions — reach for `errors.As`:
+Errors are values here, not exceptions, so reach for `errors.As`:
 
 ```go
 _, err := client.Inventory.HoldBestAvailable(ctx, eventKey, seatlayer.BestAvailableParams{Qty: 6})
@@ -374,9 +373,9 @@ case err != nil:
 | `ConflictError` | 409 | Inventory moved, or a guard rejected the change |
 | `ValidationError` | 422 | Understood and rejected |
 | `RateLimitError` | 429 | Over budget; carries `RetryAfter` |
-| `ConnectionError` | — | No answer: DNS, TLS, socket, context deadline (unwraps) |
+| `ConnectionError` | none | No answer: DNS, TLS, socket, context deadline (unwraps) |
 
-Every API error carries `Status`, `Code`, `Body`, and `RequestID` — quote the request id in support
+Every API error carries `Status`, `Code`, `Body`, and `RequestID`. Quote the request id in support
 requests.
 
 ## Reliability
@@ -447,8 +446,8 @@ Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server
 
 Add the [`github.com/seatlayer/seatlayer-go` module](https://pkg.go.dev/github.com/seatlayer/seatlayer-go),
 construct a client with `seatlayer.New` and your secret key, and call `client.Inventory.Book` with
-the hold id and a stable `BookingRef`. When your own backend picks the seats — phone orders, box
-office, comps — `Inventory.BookBestAvailable` and `Inventory.BoxOfficeBook` book outright with no
+the hold id and a stable `BookingRef`. When your own backend picks the seats (phone orders, box
+office, comps), `Inventory.BookBestAvailable` and `Inventory.BoxOfficeBook` book outright with no
 prior hold. A booking reference is required on every booking call, so each sale is tied to an
 immutable order id you can reconcile against later.
 
@@ -467,7 +466,7 @@ retrieve it with `Inventory.RetrieveHold`, whose item-level price, quantity, and
 authoritative, and confirm it with `Inventory.Book`. Use `Inventory.ExtendHold` for a long checkout
 instead of releasing and re-holding, which would hand the seats to whoever is racing for them.
 Booking is a single automatic attempt: after an unknown network outcome you may reconcile and
-repeat the exact same event, hold, and `BookingRef` — seats already booked under that reference are
+repeat the exact same event, hold, and `BookingRef`; seats already booked under that reference are
 not sold again.
 
 ### Can I use my own payment provider?

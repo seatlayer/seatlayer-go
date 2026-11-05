@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Added the 32 remaining Season operations to `Client.Seasons` (80 in all):
+  performances, package updates and prices, `Publish`, checkout tests,
+  occurrence inventory returns and reclaims, the holder list, Season order
+  refunds, cancellations and resends, hosted renewals and contacts, renewal
+  notices, sales and seat reports, seat counts, and two CSV exports.
+- Added `Client.Holders` (holders, their tickets and transfers, and
+  `ListCustomers`), `Client.Orders` (organization and event orders, refunds,
+  cancellations, resends and the event orders CSV export) and
+  `Client.EventSeries` (create, list, retrieve, add dates, update).
+- Added event sales settings to `Client.Events`: buyer checkout, payment
+  gateway, sales readiness, preflight and transitions, booking fee, and
+  discount codes.
+- CSV exports return the CSV text unchanged as a `string`. 204 deletes
+  (`Seasons.DeletePlan`, `Events.DeleteDiscountCode`) return only an error.
+- 22 of the new mutations use exact header replay, bringing the total to 36.
+  Domain-exact and unsupported operations stay single-attempt.
+- Added ten `WebhookEvent…` constants: `series.created`,
+  `series.dates_added`, `order.paid`, `order.refunded`, `order.cancelled`,
+  `customer.created`, `customer.email_changed`,
+  `season.ticket.transfer_sent`, `season.ticket.transferred` and
+  `season.ticket.transfer_cancelled`.
+
 ## 0.8.0 (2026-09-10)
 
 - Added Event hosting regions: `EventCreateParams.Region` with the

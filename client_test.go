@@ -614,6 +614,23 @@ func TestEventsFilterBySeries(t *testing.T) {
 	}
 }
 
+func TestEventSeriesFromAnEvent(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 202, body: `{"series":{"seriesKey":"ser_2"},"jobId":"job_4"}`}})
+	_, err := client.EventSeries.Create(context.Background(), EventSeriesCreateParams{
+		FromEventKey: "lighthouse-keeper",
+		Schedule:     EventSeriesSchedule{Rule: "daily", From: "2026-11-06", Until: "2026-11-19", Times: []string{"14:00", "20:15"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No name or chartKey: the series takes the event's own.
+	want := `{"fromEventKey":"lighthouse-keeper","schedule":{"rule":"daily","from":"2026-11-06","until":"2026-11-19",` +
+		`"times":["14:00","20:15"]}}`
+	if got := call(t, calls, 0).body; got != want {
+		t.Fatalf("body = %s", got)
+	}
+}
+
 func TestSinglePageKeepsCounts(t *testing.T) {
 	client, calls := newTestClient(t, []stub{{status: 200, body: `{"events":[]}`}})
 	_, _ = client.Events.List(context.Background(), &EventListParams{Limit: 10})

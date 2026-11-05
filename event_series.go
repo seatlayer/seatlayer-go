@@ -29,8 +29,11 @@ type EventSeriesSchedule struct {
 
 // EventSeriesCreateParams plans an event series from a schedule.
 type EventSeriesCreateParams struct {
+	// Name is the series name; every date carries it as its name. Leave it
+	// empty with FromEventKey, which takes the event's own name.
 	Name string
-	// ChartKey is a published floor plan of this organization.
+	// ChartKey is a published floor plan of this organization. Leave it empty
+	// with FromEventKey.
 	ChartKey string
 	Schedule EventSeriesSchedule
 	// Timezone is the IANA zone the schedule is read in. Empty leaves it out.
@@ -41,6 +44,12 @@ type EventSeriesCreateParams struct {
 	// DryRun answers the dates the schedule makes and creates nothing.
 	DryRun         bool
 	IdempotencyKey string
+	// FromEventKey makes the series from an event you already set up: it
+	// becomes the first date under its own key, and every other date is a copy
+	// of it (floor plan, prices, checkout, poster and its own seat blocks, none
+	// of its orders, holds or sales). The series takes the event's name, zone
+	// and floor plan, so leave Name, ChartKey, Venue and DurationMinutes empty.
+	FromEventKey string
 }
 
 // EventSeriesListParams pages the event series listing.
@@ -107,8 +116,9 @@ func (s *EventSeriesService) Create(
 	ctx context.Context, p EventSeriesCreateParams,
 ) (map[string]any, error) {
 	return s.client.postHeaderReplay(ctx, "/v1/event-series", params(
-		"name", p.Name,
-		"chartKey", p.ChartKey,
+		"fromEventKey", stringOrNil(p.FromEventKey),
+		"name", stringOrNil(p.Name),
+		"chartKey", stringOrNil(p.ChartKey),
 		"schedule", p.Schedule,
 		"timezone", stringOrNil(p.Timezone),
 		"venue", stringOrNil(p.Venue),

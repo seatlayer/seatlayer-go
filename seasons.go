@@ -2,6 +2,7 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -431,11 +432,20 @@ func (s *SeasonsService) CommitRenewalOffer(
 		), "")
 }
 
+// DeclineRenewalOffer declines an offer and releases its seats at once. Pass
+// one SeasonRenewalDeclineParams to keep the holder's reason on the offer.
 func (s *SeasonsService) DeclineRenewalOffer(
-	ctx context.Context, seasonKey, offerID string,
+	ctx context.Context, seasonKey, offerID string, options ...SeasonRenewalDeclineParams,
 ) (map[string]any, error) {
+	if len(options) > 1 {
+		return nil, errors.New("seatlayer: DeclineRenewalOffer accepts at most one params value")
+	}
+	body := map[string]any{}
+	if len(options) == 1 {
+		body = options[0].body()
+	}
 	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/decline"),
-		map[string]any{}, "")
+		body, "")
 }
 
 func (s *SeasonsService) ReleaseRenewalOffer(
@@ -656,6 +666,41 @@ type SeasonRenewalContactParams struct {
 // OfferIDs leaves the field out.
 type SeasonRenewalNoticesParams struct {
 	OfferIDs []string
+}
+
+// SeasonRenewalCheckoutParams starts a SeatLayer checkout that renews an
+// offer. ReturnURL is required and must be on one of the organization's
+// allowed domains; the buyer comes back there with seatlayer_checkout=success
+// or cancelled added. Empty optional fields are left out.
+type SeasonRenewalCheckoutParams struct {
+	ReturnURL string
+	// BuyerEmail is where the tickets go when no email is on file for the
+	// holder; the one on file wins.
+	BuyerEmail string
+	BuyerName  string
+	// Provider picks the connected gateway when the organization has more
+	// than one.
+	Provider       string
+	IdempotencyKey string
+}
+
+func (p SeasonRenewalCheckoutParams) body() map[string]any {
+	return params(
+		"returnUrl", p.ReturnURL,
+		"buyerEmail", stringOrNil(p.BuyerEmail),
+		"buyerName", stringOrNil(p.BuyerName),
+		"provider", stringOrNil(p.Provider),
+	)
+}
+
+// SeasonRenewalDeclineParams gives the holder's reason for declining, 1 to 200
+// characters, kept on the offer as declineReason. An empty Reason is left out.
+type SeasonRenewalDeclineParams struct {
+	Reason string
+}
+
+func (p SeasonRenewalDeclineParams) body() map[string]any {
+	return params("reason", stringOrNil(p.Reason))
 }
 
 // SeasonPerformanceRefundParams refunds every SeatLayer order holding a
@@ -957,6 +1002,34 @@ func (s *SeasonsService) ResendRenewalOffer(
 	ctx context.Context, seasonKey, offerID string,
 ) (map[string]any, error) {
 	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/resend"), nil, "")
+}
+
+// RetrieveRenewalQuote reads what renewing an offer costs, priced as the
+// SeatLayer checkout will charge it. "problem" is null when SeatLayer checkout
+// can take the renewal now; otherwise it says why not.
+func (s *SeasonsService) RetrieveRenewalQuote(
+	ctx context.Context, seasonKey, offerID string,
+) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/quote"), nil)
+}
+
+// CreateRenewalIntent records that the holder means to renew, for a renewal
+// taken by phone or at the box office, so your own checkout can commit the
+// offer. A repeat answers the same offer. It is single-attempt.
+func (s *SeasonsService) CreateRenewalIntent(
+	ctx context.Context, seasonKey, offerID string,
+) (map[string]any, error) {
+	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/intent"), nil, "")
+}
+
+// CreateRenewalCheckout starts a SeatLayer checkout that renews an offer, with
+// no hosted page. Send the buyer to payment.url; paying renews the offer. A
+// repeat with the same Idempotency-Key answers the same order.
+func (s *SeasonsService) CreateRenewalCheckout(
+	ctx context.Context, seasonKey, offerID string, p SeasonRenewalCheckoutParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/checkout"), p.body(), p.IdempotencyKey)
 }
 
 // RetrieveSalesReport reads Season money, seats, holders and renewals as totals.

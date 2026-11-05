@@ -47,7 +47,7 @@ func newOperationCases() []operationCase {
 	const eventBase = "/v1/events/ev%2F1"
 
 	return []operationCase{
-		// ---------- seasons (35) ----------
+		// ---------- seasons (38) ----------
 		{group: "seasons", name: "CreateHolderImportFromSeason", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.CreateHolderImportFromSeason(ctx, season, SeasonHolderImportFromSeasonParams{
 				SourceSeasonID: "sea_2026", SuccessorPlanActivationID: "pa_1", DryRun: &yes, IdempotencyKey: "import-season-1",
@@ -197,8 +197,26 @@ func newOperationCases() []operationCase {
 		{group: "seasons", name: "RetrieveBulkJob", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.RetrieveBulkJob(ctx, season, "job/1")
 		}, want: "GET " + seasonBase + "/jobs/job%2F1"},
+		{group: "seasons", name: "RetrieveRenewalQuote", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveRenewalQuote(ctx, season, "offer/1")
+		}, want: "GET " + seasonBase + "/renewal-offers/offer%2F1/quote",
+			response: `{"offerId":"offer/1","state":"offered","totalMinor":13500,"currency":"GBP","lines":[],"performances":[],"problem":null}`},
+		{group: "seasons", name: "CreateRenewalIntent", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CreateRenewalIntent(ctx, season, "offer/1")
+		}, want: "POST " + seasonBase + "/renewal-offers/offer%2F1/intent",
+			response: `{"offer":{"offerId":"offer/1","state":"intent_received"}}`},
+		{group: "seasons", name: "CreateRenewalCheckout", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CreateRenewalCheckout(ctx, season, "offer/1", SeasonRenewalCheckoutParams{
+				ReturnURL: "https://tickets.example/renewed", BuyerEmail: "ana@example.com",
+				BuyerName: "Ana Silva", Provider: "stripe", IdempotencyKey: "renew-1",
+			})
+		}, want: "POST " + seasonBase + "/renewal-offers/offer%2F1/checkout",
+			body: `{"returnUrl":"https://tickets.example/renewed","buyerEmail":"ana@example.com",` +
+				`"buyerName":"Ana Silva","provider":"stripe"}`,
+			replay: true, key: "renew-1", status: 201,
+			response: `{"orderId":"ord_1","totalMinor":13500,"currency":"GBP","expiresAt":1,"payment":{"url":"https://pay.example/1"}}`},
 
-		// ---------- holders (12) ----------
+		// ---------- holders (14) ----------
 		{group: "holders", name: "ListCustomers", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Holders.ListCustomers(ctx, &CustomerListParams{
 				Email: "a@example.com", HolderRef: "hol/1", Cursor: "c/1", Limit: 10,
@@ -249,6 +267,19 @@ func newOperationCases() []operationCase {
 		}, want: "POST " + holderBase + "/returns",
 			body: `{"ticketIds":["tkt_0123456789abcdef01234567"]}`, replay: true, status: 201,
 			response: `{"return":{"returnId":"ret_1","state":"pending","seasonKey":"sea_1","tickets":[],"createdAt":1}}`},
+		{group: "holders", name: "CreateRenewalCheckout", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.CreateRenewalCheckout(ctx, "hol/1", "offer/1", SeasonRenewalCheckoutParams{
+				ReturnURL: "https://tickets.example/renewed", BuyerEmail: "cara@example.com",
+				BuyerName: "Cara", Provider: "stripe",
+			})
+		}, want: "POST " + holderBase + "/renewal-offers/offer%2F1/checkout",
+			body: `{"returnUrl":"https://tickets.example/renewed","buyerEmail":"cara@example.com",` +
+				`"buyerName":"Cara","provider":"stripe"}`,
+			replay: true, status: 201, response: `{"orderId":"ord_1","payment":{"url":"https://pay.example/1"}}`},
+		{group: "holders", name: "DeclineRenewalOffer", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.DeclineRenewalOffer(ctx, "hol/1", "offer/1", &SeasonRenewalDeclineParams{Reason: "Moving away"})
+		}, want: "POST " + holderBase + "/renewal-offers/offer%2F1/decline", body: `{"reason":"Moving away"}`,
+			response: `{"offer":{"offerId":"offer/1","state":"declined","declineReason":"Moving away"}}`},
 
 		// ---------- orders (9) ----------
 		{group: "orders", name: "List", call: func(ctx context.Context, c *Client) (any, error) {
@@ -411,9 +442,9 @@ func TestSeason2aOperationsCoverTheSpec(t *testing.T) {
 	for _, tc := range newOperationCases() {
 		counts[tc.group]++
 	}
-	want := map[string]int{"seasons": 35, "holders": 12, "orders": 9, "eventSales": 14, "eventSeries": 5}
+	want := map[string]int{"seasons": 38, "holders": 14, "orders": 9, "eventSales": 14, "eventSeries": 5}
 	if !reflect.DeepEqual(counts, want) {
-		t.Fatalf("operation cases per group = %v, want %v (75 in all)", counts, want)
+		t.Fatalf("operation cases per group = %v, want %v (80 in all)", counts, want)
 	}
 }
 
@@ -512,6 +543,90 @@ func TestHolderCreateReturnKeepsCallerKeyAcrossRetry(t *testing.T) {
 		if key := sent.header.Get("Idempotency-Key"); key != "return-1" {
 			t.Fatalf("attempt %d Idempotency-Key = %q, want return-1", i, key)
 		}
+	}
+}
+
+// A renewal checkout keeps one key across a retry, generated or the caller's,
+// for a season offer and for a holder's offer alike.
+func TestRenewalCheckoutKeepsOneKeyAcrossRetry(t *testing.T) {
+	unavailable := stub{status: 503, body: `{"error":"unavailable"}`, headers: map[string]string{"Retry-After": "0"}}
+	started := stub{status: 201, body: `{"orderId":"ord_1","payment":{"url":"https://pay.example/1"}}`}
+	client, calls := newTestClient(t, []stub{unavailable, started, unavailable, started})
+	ctx := context.Background()
+	p := SeasonRenewalCheckoutParams{ReturnURL: "https://tickets.example/r"}
+
+	if _, err := client.Seasons.CreateRenewalCheckout(ctx, "sea/a", "offer/1", p); err != nil {
+		t.Fatalf("Seasons.CreateRenewalCheckout: %v", err)
+	}
+	p.IdempotencyKey = "renew-1"
+	got, err := client.Holders.CreateRenewalCheckout(ctx, "a/b", "offer/1", p)
+	if err != nil {
+		t.Fatalf("Holders.CreateRenewalCheckout: %v", err)
+	}
+	if got["orderId"] != "ord_1" {
+		t.Fatalf("result = %v, want the started order", got)
+	}
+	if len(*calls) != 4 {
+		t.Fatalf("attempts = %d, want 4", len(*calls))
+	}
+	lines := []string{
+		"POST /v1/seasons/sea%2Fa/renewal-offers/offer%2F1/checkout",
+		"POST /v1/seasons/sea%2Fa/renewal-offers/offer%2F1/checkout",
+		"POST /v1/holders/a%2Fb/renewal-offers/offer%2F1/checkout",
+		"POST /v1/holders/a%2Fb/renewal-offers/offer%2F1/checkout",
+	}
+	for i, line := range lines {
+		sent := call(t, calls, i)
+		if got := requestLine(sent); got != line {
+			t.Fatalf("attempt %d request = %q, want %q", i, got, line)
+		}
+		assertJSONBody(t, sent.body, `{"returnUrl":"https://tickets.example/r"}`)
+	}
+	first := call(t, calls, 0).header.Get("Idempotency-Key")
+	if first == "" || call(t, calls, 1).header.Get("Idempotency-Key") != first {
+		t.Fatalf("generated key not reused: %q then %q", first, call(t, calls, 1).header.Get("Idempotency-Key"))
+	}
+	for i := 2; i < 4; i++ {
+		if key := call(t, calls, i).header.Get("Idempotency-Key"); key != "renew-1" {
+			t.Fatalf("attempt %d Idempotency-Key = %q, want renew-1", i, key)
+		}
+	}
+}
+
+// The decline reason reaches the wire on both declines; without one the season
+// decline still sends an empty object and the holder decline sends no body.
+func TestRenewalDeclineReason(t *testing.T) {
+	ok := stub{status: 200, body: `{"offer":{"state":"declined"}}`}
+	client, calls := newTestClient(t, []stub{ok, ok, ok, ok})
+	ctx := context.Background()
+
+	_, _ = client.Seasons.DeclineRenewalOffer(ctx, "sea/a", "offer/1", SeasonRenewalDeclineParams{Reason: "Moving away"})
+	_, _ = client.Seasons.DeclineRenewalOffer(ctx, "sea_1", "offer_1")
+	_, _ = client.Holders.DeclineRenewalOffer(ctx, "a/b", "offer/1", &SeasonRenewalDeclineParams{Reason: "Moving away"})
+	_, _ = client.Holders.DeclineRenewalOffer(ctx, "hol_1", "offer_1", nil)
+
+	want := []struct{ line, body string }{
+		{"POST /v1/seasons/sea%2Fa/renewal-offers/offer%2F1/decline", `{"reason":"Moving away"}`},
+		{"POST /v1/seasons/sea_1/renewal-offers/offer_1/decline", `{}`},
+		{"POST /v1/holders/a%2Fb/renewal-offers/offer%2F1/decline", `{"reason":"Moving away"}`},
+		{"POST /v1/holders/hol_1/renewal-offers/offer_1/decline", ""},
+	}
+	if len(*calls) != len(want) {
+		t.Fatalf("requests = %d, want %d", len(*calls), len(want))
+	}
+	for i, w := range want {
+		sent := call(t, calls, i)
+		if line := requestLine(sent); line != w.line {
+			t.Fatalf("call %d = %q, want %q", i, line, w.line)
+		}
+		assertJSONBody(t, sent.body, w.body)
+		if key := sent.header.Get("Idempotency-Key"); key != "" {
+			t.Fatalf("call %d sent Idempotency-Key %q", i, key)
+		}
+	}
+	if _, err := client.Seasons.DeclineRenewalOffer(ctx, "sea_1", "offer_1",
+		SeasonRenewalDeclineParams{}, SeasonRenewalDeclineParams{}); err == nil {
+		t.Fatal("two params values: want an error")
 	}
 }
 

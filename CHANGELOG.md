@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- Added the 35 remaining Season operations to `Client.Seasons` (83 in all):
+- Added the 38 remaining Season operations to `Client.Seasons` (86 in all):
   performances, package updates and prices, `Publish`, checkout tests,
   occurrence inventory returns and reclaims, the holder list, Season order
   refunds, cancellations and resends, hosted renewals and contacts, renewal
-  notices, sales and seat reports, seat counts, two CSV exports, and bulk
+  notices, renewal quotes, intents and checkouts, sales and seat reports, seat counts, two CSV exports, and bulk
   refunds with their jobs.
 - Added `Client.Holders` (holders, their tickets and transfers, and
   `ListCustomers`), `Client.Orders` (organization and event orders, refunds,
@@ -19,7 +19,7 @@
   discount codes.
 - CSV exports return the CSV text unchanged as a `string`. 204 deletes
   (`Seasons.DeletePlan`, `Events.DeleteDiscountCode`) return only an error.
-- 24 of the new mutations use exact header replay, bringing the total to 38.
+- 26 of the new mutations use exact header replay, bringing the total to 40.
   Domain-exact and unsupported operations stay single-attempt.
 - Added ten `WebhookEvent…` constants: `series.created`,
   `series.dates_added`, `order.paid`, `order.refunded`, `order.cancelled`,
@@ -40,6 +40,12 @@
   `WebhookEvent…` constant for each; they used to refuse every Season event
   except the three ticket transfer ones.
 - `EventListParams` takes `SeriesKey` to list one event series' dates.
+- Added `Seasons.RetrieveRenewalQuote`: what renewing an offer costs, and whether SeatLayer checkout can take it now.
+- Added `Seasons.CreateRenewalIntent`: record a holder's intent for a renewal taken by phone or at the box office, so your own checkout can commit.
+- Added `Seasons.CreateRenewalCheckout`: a SeatLayer checkout that renews an offer with no hosted page, with header replay (`SeasonRenewalCheckoutParams`).
+- Added `Holders.CreateRenewalCheckout`: the same checkout for one of a holder's offers, with header replay.
+- Added `Holders.DeclineRenewalOffer`: decline one of a holder's offers, with an optional reason (`SeasonRenewalDeclineParams`; nil sends no body).
+- `Seasons.DeclineRenewalOffer` takes an optional `SeasonRenewalDeclineParams` with the holder's `Reason`; existing calls compile unchanged.
 
 ## 0.8.0 (2026-09-10)
 

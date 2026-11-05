@@ -7,7 +7,7 @@ import (
 )
 
 // HoldersService reads and changes ticket holders, their tickets, ticket
-// transfers and returns, and lists the customers behind them.
+// transfers, returns and renewals, and lists the customers behind them.
 type HoldersService struct{ client *Client }
 
 // CustomerListParams filters and pages the organization's customers.
@@ -163,4 +163,29 @@ func (s *HoldersService) CreateReturn(
 ) (map[string]any, error) {
 	return s.client.postHeaderReplay(ctx, "/v1/holders/"+escape(holderRef)+"/returns",
 		params("ticketIds", p.TicketIDs), p.IdempotencyKey)
+}
+
+// CreateRenewalCheckout starts a SeatLayer checkout that renews one of a
+// holder's offers (renewalOffer on ListSeasons). Send the buyer to
+// payment.url. A repeat with the same Idempotency-Key answers the same order.
+func (s *HoldersService) CreateRenewalCheckout(
+	ctx context.Context, holderRef, offerID string, p SeasonRenewalCheckoutParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		"/v1/holders/"+escape(holderRef)+"/renewal-offers/"+escape(offerID)+"/checkout",
+		p.body(), p.IdempotencyKey)
+}
+
+// DeclineRenewalOffer declines one of a holder's renewal offers and releases
+// its seats. Declining again answers the same offer, with the first reason. It
+// is single-attempt. Pass nil to give no reason and send no body.
+func (s *HoldersService) DeclineRenewalOffer(
+	ctx context.Context, holderRef, offerID string, p *SeasonRenewalDeclineParams,
+) (map[string]any, error) {
+	var body any
+	if p != nil {
+		body = p.body()
+	}
+	return s.client.post(ctx,
+		"/v1/holders/"+escape(holderRef)+"/renewal-offers/"+escape(offerID)+"/decline", body, "")
 }

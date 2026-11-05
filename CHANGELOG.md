@@ -11,12 +11,14 @@
   `ListCustomers`), `Client.Orders` (organization and event orders, refunds,
   cancellations, resends and the event orders CSV export) and
   `Client.EventSeries` (create, list, retrieve, add dates, update).
+- Added `Holders.CreateReturn`: give back a holder's seat on one date, one
+  per ticket.
 - Added event sales settings to `Client.Events`: buyer checkout, payment
   gateway, sales readiness, preflight and transitions, booking fee, and
   discount codes.
 - CSV exports return the CSV text unchanged as a `string`. 204 deletes
   (`Seasons.DeletePlan`, `Events.DeleteDiscountCode`) return only an error.
-- 22 of the new mutations use exact header replay, bringing the total to 36.
+- 23 of the new mutations use exact header replay, bringing the total to 37.
   Domain-exact and unsupported operations stay single-attempt.
 - Added ten `WebhookEvent…` constants: `series.created`,
   `series.dates_added`, `order.paid`, `order.refunded`, `order.cancelled`,

@@ -385,7 +385,7 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Thirty-six mutations use exact header replay:
+`Retry-After` wins when the server sends it. Thirty-seven mutations use exact header replay:
 `Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
 `Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
 `Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.UpdatePlan`, `Seasons.DeletePlan`,
@@ -395,10 +395,10 @@ requests.
 `Seasons.MarkPerformancePast`, `Seasons.CreateCheckoutTest`, `Seasons.ReplacePackagePrices`,
 `Seasons.AttachPlanPerformance`, `Seasons.DeletePlanPerformance`, `Seasons.RefundOrder`,
 `Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Holders.Update`, `Holders.CreateTransfer`,
-`Orders.RefundEventOrder`, `Orders.CancelEventOrder`, `EventSeries.Create`, `EventSeries.AddDates`,
-and `EventSeries.Update`. Other 4xx responses are never retried.
+`Holders.CreateReturn`, `Orders.RefundEventOrder`, `Orders.CancelEventOrder`, `EventSeries.Create`,
+`EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
 
-**Idempotency.** Those 36 replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those 37 replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
 have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
 includes inventory holds and bookings, show-once credential or secret creation, unsupported
@@ -445,7 +445,7 @@ return the CSV text as a `string`.
 | `Events` | `List` `All` `Create` `Retrieve` `RetrieveConfigurationBinding` `UpdateConfigurationBinding` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `ListTicketReleases` `UpdateTicketReleases` `CloseTicketRelease` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` `RetrieveBuyerCheckout` `ReplaceBuyerCheckout` `RetrievePaymentGateway` `ReplacePaymentGateway` `RetrieveSalesReadiness` `PreflightSales` `TransitionSales` `RetrieveBookingFee` `ReplaceBookingFee` `ListDiscountCodes` `CreateDiscountCode` `UpdateDiscountCode` `EndDiscountCode` `DeleteDiscountCode` |
 | `EventSeries` | `Create` `List` `Retrieve` `AddDates` `Update` |
 | `Orders` | `List` `Retrieve` `ListTickets` `ListEventOrders` `RetrieveEventOrder` `ExportEventOrdersCSV` `RefundEventOrder` `CancelEventOrder` `ResendEventOrderTickets` |
-| `Holders` | `ListCustomers` `Retrieve` `Update` `RevokeSessions` `ListSeasons` `ListTickets` `RetrieveTicket` `CreateTransfer` `ListTransfers` `CancelTransfer` `AcceptTransfer` |
+| `Holders` | `ListCustomers` `Retrieve` `Update` `RevokeSessions` `ListSeasons` `ListTickets` `RetrieveTicket` `CreateTransfer` `ListTransfers` `CancelTransfer` `AcceptTransfer` `CreateReturn` |
 | `Channels` | `ListChannels` `CreateChannel` `UpdateChannel` `UpdateAssignments` `ListAllocation` `RetrieveAccessPreview` `RetrieveReport` `Pause` `Unpause` `Archive` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `CreateAccessLink` `ListAccessLinks` `RotateAccessLink` `RevokeAccessLink` |
 | `Inventory` | `Hold` `HoldBestAvailable` `BookBestAvailable` `ExtendHold` `RetrieveHold` `Release` `Book` `BoxOfficeBook` `Unbook` `Block` `Unblock` `UnblockAll` `RetrieveAvailability` `UpdateAvailability` `ListBookings` `RetrieveBooking` |
 | `Sessions` | `CreateManageSession` `RevokeManageSession` `CreateDesignerSession` `RevokeDesignerSession` |

@@ -184,7 +184,7 @@ func newOperationCases() []operationCase {
 			return c.Seasons.RetrieveSeatCounts(ctx, season)
 		}, want: "GET " + seasonBase + "/seat-counts"},
 
-		// ---------- holders (11) ----------
+		// ---------- holders (12) ----------
 		{group: "holders", name: "ListCustomers", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Holders.ListCustomers(ctx, &CustomerListParams{
 				Email: "a@example.com", HolderRef: "hol/1", Cursor: "c/1", Limit: 10,
@@ -228,6 +228,13 @@ func newOperationCases() []operationCase {
 		{group: "holders", name: "AcceptTransfer", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Holders.AcceptTransfer(ctx, "hol/1", "tr/1")
 		}, want: "POST " + holderBase + "/transfers/tr%2F1/accept"},
+		{group: "holders", name: "CreateReturn", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.CreateReturn(ctx, "hol/1", HolderReturnCreateParams{
+				TicketIDs: []string{"tkt_0123456789abcdef01234567"},
+			})
+		}, want: "POST " + holderBase + "/returns",
+			body: `{"ticketIds":["tkt_0123456789abcdef01234567"]}`, replay: true, status: 201,
+			response: `{"return":{"returnId":"ret_1","state":"pending","seasonKey":"sea_1","tickets":[],"createdAt":1}}`},
 
 		// ---------- orders (9) ----------
 		{group: "orders", name: "List", call: func(ctx context.Context, c *Client) (any, error) {
@@ -390,9 +397,9 @@ func TestSeason2aOperationsCoverTheSpec(t *testing.T) {
 	for _, tc := range newOperationCases() {
 		counts[tc.group]++
 	}
-	want := map[string]int{"seasons": 32, "holders": 11, "orders": 9, "eventSales": 14, "eventSeries": 5}
+	want := map[string]int{"seasons": 32, "holders": 12, "orders": 9, "eventSales": 14, "eventSeries": 5}
 	if !reflect.DeepEqual(counts, want) {
-		t.Fatalf("operation cases per group = %v, want %v (71 in all)", counts, want)
+		t.Fatalf("operation cases per group = %v, want %v (72 in all)", counts, want)
 	}
 }
 
@@ -457,6 +464,40 @@ func TestSeason2aOperationsRetryOnlyWhenReplaySafe(t *testing.T) {
 				t.Fatalf("single-attempt operation made %d attempts", len(*calls))
 			}
 		})
+	}
+}
+
+// A holder return keeps the caller's key across a retry, escapes the holder
+// reference, and hands back the return envelope.
+func TestHolderCreateReturnKeepsCallerKeyAcrossRetry(t *testing.T) {
+	created := `{"return":{"returnId":"ret_1","state":"returned","seasonKey":"sea_1",` +
+		`"tickets":[{"ticketId":"tkt_0123456789abcdef01234567","eventKey":"ev_1","label":"A-1",` +
+		`"state":"returned","error":null}],"createdAt":1}}`
+	client, calls := newTestClient(t, []stub{
+		{status: 503, body: `{"error":"unavailable"}`, headers: map[string]string{"Retry-After": "0"}},
+		{status: 201, body: created},
+	})
+	got, err := client.Holders.CreateReturn(context.Background(), "a/b", HolderReturnCreateParams{
+		TicketIDs: []string{"tkt_0123456789abcdef01234567"}, IdempotencyKey: "return-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateReturn: %v", err)
+	}
+	if ret, ok := got["return"].(map[string]any); !ok || ret["returnId"] != "ret_1" {
+		t.Fatalf("result = %v, want the return envelope", got)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(*calls))
+	}
+	for i := range 2 {
+		sent := call(t, calls, i)
+		if line := requestLine(sent); line != "POST /v1/holders/a%2Fb/returns" {
+			t.Fatalf("attempt %d request = %q", i, line)
+		}
+		assertJSONBody(t, sent.body, `{"ticketIds":["tkt_0123456789abcdef01234567"]}`)
+		if key := sent.header.Get("Idempotency-Key"); key != "return-1" {
+			t.Fatalf("attempt %d Idempotency-Key = %q, want return-1", i, key)
+		}
 	}
 }
 

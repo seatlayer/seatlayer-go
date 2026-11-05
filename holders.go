@@ -6,8 +6,8 @@ import (
 	"net/url"
 )
 
-// HoldersService reads and changes ticket holders, their tickets and ticket
-// transfers, and lists the customers behind them.
+// HoldersService reads and changes ticket holders, their tickets, ticket
+// transfers and returns, and lists the customers behind them.
 type HoldersService struct{ client *Client }
 
 // CustomerListParams filters and pages the organization's customers.
@@ -46,6 +46,13 @@ type HolderTicketListParams struct {
 type HolderTransferCreateParams struct {
 	TicketIDs      []string
 	ToEmail        string
+	IdempotencyKey string
+}
+
+// HolderReturnCreateParams gives back a holder's seat on one date, one per
+// ticket. TicketIDs takes 1 to 20 tickets, all of one Season.
+type HolderReturnCreateParams struct {
+	TicketIDs      []string
 	IdempotencyKey string
 }
 
@@ -146,4 +153,14 @@ func (s *HoldersService) AcceptTransfer(
 ) (map[string]any, error) {
 	return s.client.post(ctx,
 		"/v1/holders/"+escape(holderRef)+"/transfers/"+escape(transferID)+"/accept", nil, "")
+}
+
+// CreateReturn gives back a holder's seat on one date, one per ticket. The
+// result is {"return": ...}; a repeat with the same key answers with the same
+// return.
+func (s *HoldersService) CreateReturn(
+	ctx context.Context, holderRef string, p HolderReturnCreateParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx, "/v1/holders/"+escape(holderRef)+"/returns",
+		params("ticketIds", p.TicketIDs), p.IdempotencyKey)
 }

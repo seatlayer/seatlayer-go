@@ -1,0 +1,566 @@
+package seatlayer
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// operationCase is one public operation added for Season platform slice 2a:
+// the call, the exact request it must send, and its replay class.
+type operationCase struct {
+	group string
+	name  string
+	call  func(ctx context.Context, c *Client) (any, error)
+	// want is "METHOD /escaped/path" plus "?query" when there is one.
+	want string
+	// body is the expected JSON body; empty means no body at all.
+	body string
+	// replay marks header-replay operations, which must carry an Idempotency-Key.
+	replay bool
+	// key, when set, is the caller key the request must carry unchanged.
+	key      string
+	status   int
+	response string
+}
+
+func (tc operationCase) stub() stub {
+	status, body := tc.status, tc.response
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if body == "" && status != http.StatusNoContent {
+		body = `{}`
+	}
+	return stub{status: status, body: body}
+}
+
+func newOperationCases() []operationCase {
+	yes, no := true, false
+	const season = "sea/a"
+	const seasonBase = "/v1/seasons/sea%2Fa"
+	const holderBase = "/v1/holders/hol%2F1"
+	const eventBase = "/v1/events/ev%2F1"
+
+	return []operationCase{
+		// ---------- seasons (32) ----------
+		{group: "seasons", name: "CreateHolderImportFromSeason", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CreateHolderImportFromSeason(ctx, season, SeasonHolderImportFromSeasonParams{
+				SourceSeasonID: "sea_2026", SuccessorPlanActivationID: "pa_1", DryRun: &yes, IdempotencyKey: "import-season-1",
+			})
+		}, want: "POST " + seasonBase + "/imports/from-season",
+			body:   `{"sourceSeasonId":"sea_2026","successorPlanActivationId":"pa_1","dryRun":true}`,
+			replay: true, key: "import-season-1", status: 201},
+		{group: "seasons", name: "ListPerformances", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ListPerformances(ctx, season)
+		}, want: "GET " + seasonBase + "/performances"},
+		{group: "seasons", name: "CreatePerformances", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CreatePerformances(ctx, season, SeasonPerformancesCreateParams{
+				TitlePattern: "Match {n}", FirstStartsAt: 1700000000000, Timezone: "Europe/London",
+				Repeat: "weekly", Count: 3, Venue: FieldValue("Main hall"), DurationMinutes: FieldNull[int](),
+				Region: RegionWesternEurope, AttachToPlanKeys: []string{"plan_1"},
+			})
+		}, want: "POST " + seasonBase + "/performances",
+			body: `{"titlePattern":"Match {n}","firstStartsAt":1700000000000,"timezone":"Europe/London",` +
+				`"repeat":"weekly","count":3,"venue":"Main hall","durationMinutes":null,` +
+				`"region":"western-europe","attachToPlanKeys":["plan_1"]}`,
+			replay: true, status: 201},
+		{group: "seasons", name: "AttachPerformances", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.AttachPerformances(ctx, season, SeasonPerformancesAttachParams{
+				EventKeys: []string{"ev_1", "ev_2"}, AttachToPlanKeys: []string{"plan_1"},
+			})
+		}, want: "POST " + seasonBase + "/performances/attach",
+			body: `{"eventKeys":["ev_1","ev_2"],"attachToPlanKeys":["plan_1"]}`, replay: true},
+		{group: "seasons", name: "DeletePerformance", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.DeletePerformance(ctx, season, "ev/1", "delete-performance-1")
+		}, want: "DELETE " + seasonBase + "/performances/ev%2F1", replay: true, key: "delete-performance-1"},
+		{group: "seasons", name: "UpdatePlan", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.UpdatePlan(ctx, season, "plan/1", SeasonPlanUpdateParams{
+				Name: "Full season", EventKeys: []string{"ev_1", "ev_2"},
+			})
+		}, want: "PATCH " + seasonBase + "/plans/plan%2F1",
+			body: `{"name":"Full season","eventKeys":["ev_1","ev_2"]}`, replay: true},
+		{group: "seasons", name: "DeletePlan", call: func(ctx context.Context, c *Client) (any, error) {
+			return nil, c.Seasons.DeletePlan(ctx, season, "plan/1", "")
+		}, want: "DELETE " + seasonBase + "/plans/plan%2F1", replay: true, status: 204},
+		{group: "seasons", name: "Publish", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.Publish(ctx, season, "publish-1")
+		}, want: "POST " + seasonBase + "/publish", replay: true, key: "publish-1"},
+		{group: "seasons", name: "CreateCheckoutTest", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CreateCheckoutTest(ctx, season, &SeasonCheckoutTestParams{PlanKey: "plan_1", Quantity: 2})
+		}, want: "POST " + seasonBase + "/checkout-tests", body: `{"planKey":"plan_1","quantity":2}`, replay: true},
+		{group: "seasons", name: "ListCheckoutTests", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ListCheckoutTests(ctx, season)
+		}, want: "GET " + seasonBase + "/checkout-tests"},
+		{group: "seasons", name: "ReplacePackagePrices", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ReplacePackagePrices(ctx, season, "plan/1", SeasonPackagePricesParams{
+				Prices: []SeasonPackagePrice{{CategoryKey: "cat_a", UnitPrice: 12000}}, Currency: "EUR",
+			})
+		}, want: "PUT " + seasonBase + "/plans/plan%2F1/prices",
+			body: `{"prices":[{"categoryKey":"cat_a","unitPrice":12000}],"currency":"EUR"}`, replay: true},
+		{group: "seasons", name: "ListPrices", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ListPrices(ctx, season)
+		}, want: "GET " + seasonBase + "/prices"},
+		{group: "seasons", name: "AttachPlanPerformance", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.AttachPlanPerformance(ctx, season, "plan/1", "ev_3", "")
+		}, want: "POST " + seasonBase + "/plans/plan%2F1/performances", body: `{"eventKey":"ev_3"}`, replay: true},
+		{group: "seasons", name: "DeletePlanPerformance", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.DeletePlanPerformance(ctx, season, "plan/1", "ev/3", "")
+		}, want: "DELETE " + seasonBase + "/plans/plan%2F1/performances/ev%2F3", replay: true},
+		{group: "seasons", name: "MarkPerformancePast", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.MarkPerformancePast(ctx, season, "ev/1", SeasonMarkPastParams{Force: true})
+		}, want: "POST " + seasonBase + "/performances/ev%2F1/past", body: `{"force":true}`, replay: true},
+		{group: "seasons", name: "ReturnOccurrenceInventory", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ReturnOccurrenceInventory(ctx, season, "ev/1", SeasonOccurrenceReturnParams{
+				ActionID: "ret_1", BookingRef: "order_1", PlanActivationID: "pa_1", Labels: []string{"A-1"},
+				Source: SeasonInventorySource{BookingActionID: "book_1"},
+			})
+		}, want: "POST " + seasonBase + "/occurrences/ev%2F1/returns",
+			body: `{"actionId":"ret_1","bookingRef":"order_1","planActivationId":"pa_1","labels":["A-1"],` +
+				`"source":{"bookingActionId":"book_1"}}`},
+		{group: "seasons", name: "ReclaimOccurrenceInventory", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ReclaimOccurrenceInventory(ctx, season, "ev/1", SeasonOccurrenceReclaimParams{
+				ActionID: "rec_1", ReturnActionID: "ret_1", BookingRef: "order_1", PlanActivationID: "pa_1",
+				Labels: []string{"A-1"}, Source: SeasonInventorySource{RenewalOfferID: "offer_1"},
+			})
+		}, want: "POST " + seasonBase + "/occurrences/ev%2F1/reclaims",
+			body: `{"actionId":"rec_1","returnActionId":"ret_1","bookingRef":"order_1","planActivationId":"pa_1",` +
+				`"labels":["A-1"],"source":{"renewalOfferId":"offer_1"}}`},
+		{group: "seasons", name: "ListHolders", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ListHolders(ctx, season, &SeasonHolderListParams{
+				Q: "ann lee", Status: "active", Cursor: "c/1", Limit: 20,
+			})
+		}, want: "GET " + seasonBase + "/holders?cursor=c%2F1&limit=20&q=ann+lee&status=active"},
+		{group: "seasons", name: "RefundOrder", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RefundOrder(ctx, season, "ord/1", &OrderRefundParams{AmountMinor: 500, IdempotencyKey: "refund-1"})
+		}, want: "POST " + seasonBase + "/orders/ord%2F1/refund", body: `{"amountMinor":500}`,
+			replay: true, key: "refund-1"},
+		{group: "seasons", name: "CancelOrder", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CancelOrder(ctx, season, "ord/1", OrderCancelParams{
+				Reason: "other", Note: "duplicate", RefundConfirmed: true, NotifyBuyer: &no,
+			})
+		}, want: "POST " + seasonBase + "/orders/ord%2F1/cancel",
+			body: `{"reason":"other","note":"duplicate","refundConfirmed":true,"notifyBuyer":false}`, replay: true},
+		{group: "seasons", name: "CancelOrderDate", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CancelOrderDate(ctx, season, "ord/1", "ev/2", &SeasonOrderDateCancelParams{ActionID: "date_1"})
+		}, want: "POST " + seasonBase + "/orders/ord%2F1/dates/ev%2F2/cancel", body: `{"actionId":"date_1"}`, replay: true},
+		{group: "seasons", name: "ResendOrderTickets", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ResendOrderTickets(ctx, season, "ord/1", &OrderResendParams{Email: "a@example.com"})
+		}, want: "POST " + seasonBase + "/orders/ord%2F1/resend", body: `{"email":"a@example.com"}`},
+		{group: "seasons", name: "RetrieveHostedRenewals", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveHostedRenewals(ctx, season)
+		}, want: "GET " + seasonBase + "/renewal-hosted"},
+		{group: "seasons", name: "RotateRenewalOfferLink", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RotateRenewalOfferLink(ctx, season, "offer/1")
+		}, want: "POST " + seasonBase + "/renewal-offers/offer%2F1/link", status: 201},
+		{group: "seasons", name: "UpdateRenewalOfferContact", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.UpdateRenewalOfferContact(ctx, season, "offer/1", SeasonRenewalContactParams{
+				Email: FieldValue("b@example.com"), Name: FieldNull[string](),
+			})
+		}, want: "POST " + seasonBase + "/renewal-offers/offer%2F1/contact", body: `{"email":"b@example.com","name":null}`},
+		{group: "seasons", name: "CreateRenewalNotices", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.CreateRenewalNotices(ctx, season, &SeasonRenewalNoticesParams{OfferIDs: []string{"offer_1"}})
+		}, want: "POST " + seasonBase + "/renewal-notices", body: `{"offerIds":["offer_1"]}`},
+		{group: "seasons", name: "ResendRenewalOffer", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ResendRenewalOffer(ctx, season, "offer/1")
+		}, want: "POST " + seasonBase + "/renewal-offers/offer%2F1/resend", status: 202},
+		{group: "seasons", name: "RetrieveSalesReport", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveSalesReport(ctx, season)
+		}, want: "GET " + seasonBase + "/reports/sales"},
+		{group: "seasons", name: "RetrieveSeatsReport", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveSeatsReport(ctx, season)
+		}, want: "GET " + seasonBase + "/reports/seats"},
+		{group: "seasons", name: "ExportHoldersCSV", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ExportHoldersCSV(ctx, season, &SeasonHolderExportParams{Q: "ann", Status: "active"})
+		}, want: "GET " + seasonBase + "/reports/holders.csv?q=ann&status=active", response: "name\nAnn\n"},
+		{group: "seasons", name: "ExportOrdersCSV", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ExportOrdersCSV(ctx, season)
+		}, want: "GET " + seasonBase + "/reports/orders.csv", response: "order\nord_1\n"},
+		{group: "seasons", name: "RetrieveSeatCounts", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveSeatCounts(ctx, season)
+		}, want: "GET " + seasonBase + "/seat-counts"},
+
+		// ---------- holders (11) ----------
+		{group: "holders", name: "ListCustomers", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.ListCustomers(ctx, &CustomerListParams{
+				Email: "a@example.com", HolderRef: "hol/1", Cursor: "c/1", Limit: 10,
+			})
+		}, want: "GET /v1/customers?cursor=c%2F1&email=a%40example.com&holderRef=hol%2F1&limit=10"},
+		{group: "holders", name: "Retrieve", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.Retrieve(ctx, "hol/1")
+		}, want: "GET " + holderBase},
+		{group: "holders", name: "Update", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.Update(ctx, "hol/1", HolderUpdateParams{
+				Email: "c@example.com", Name: FieldValue("Ann"), Phone: FieldNull[string](), IdempotencyKey: "holder-1",
+			})
+		}, want: "PATCH " + holderBase, body: `{"email":"c@example.com","name":"Ann","phone":null}`,
+			replay: true, key: "holder-1"},
+		{group: "holders", name: "RevokeSessions", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.RevokeSessions(ctx, "hol/1", &HolderSessionRevokeParams{SessionID: "csn_0123456789abcdef01234567"})
+		}, want: "POST " + holderBase + "/sessions/revoke", body: `{"sessionId":"csn_0123456789abcdef01234567"}`},
+		{group: "holders", name: "ListSeasons", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.ListSeasons(ctx, "hol/1")
+		}, want: "GET " + holderBase + "/seasons"},
+		{group: "holders", name: "ListTickets", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.ListTickets(ctx, "hol/1", &HolderTicketListParams{
+				SeasonKey: "sea/a", From: 1, To: 2, Cursor: "c", Limit: 5,
+			})
+		}, want: "GET " + holderBase + "/tickets?cursor=c&from=1&limit=5&seasonKey=sea%2Fa&to=2"},
+		{group: "holders", name: "RetrieveTicket", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.RetrieveTicket(ctx, "hol/1", "tkt/1")
+		}, want: "GET " + holderBase + "/tickets/tkt%2F1"},
+		{group: "holders", name: "CreateTransfer", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.CreateTransfer(ctx, "hol/1", HolderTransferCreateParams{
+				TicketIDs: []string{"tkt_0123456789abcdef01234567"}, ToEmail: "d@example.com",
+			})
+		}, want: "POST " + holderBase + "/transfers",
+			body: `{"ticketIds":["tkt_0123456789abcdef01234567"],"toEmail":"d@example.com"}`, replay: true, status: 201},
+		{group: "holders", name: "ListTransfers", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.ListTransfers(ctx, "hol/1")
+		}, want: "GET " + holderBase + "/transfers"},
+		{group: "holders", name: "CancelTransfer", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.CancelTransfer(ctx, "hol/1", "tr/1")
+		}, want: "POST " + holderBase + "/transfers/tr%2F1/cancel"},
+		{group: "holders", name: "AcceptTransfer", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Holders.AcceptTransfer(ctx, "hol/1", "tr/1")
+		}, want: "POST " + holderBase + "/transfers/tr%2F1/accept"},
+
+		// ---------- orders (9) ----------
+		{group: "orders", name: "List", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.List(ctx, &OrderListParams{
+				EventKey: "ev/1", SeasonKey: "sea/a", Status: "paid", From: 10, To: 20, Cursor: "c", Limit: 25,
+			})
+		}, want: "GET /v1/orders?cursor=c&eventKey=ev%2F1&from=10&limit=25&seasonKey=sea%2Fa&status=paid&to=20"},
+		{group: "orders", name: "Retrieve", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.Retrieve(ctx, "ord/1")
+		}, want: "GET /v1/orders/ord%2F1"},
+		{group: "orders", name: "ListTickets", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.ListTickets(ctx, "ord/1")
+		}, want: "GET /v1/orders/ord%2F1/tickets"},
+		{group: "orders", name: "ListEventOrders", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.ListEventOrders(ctx, "ev/1", &EventOrderListParams{
+				Q: "ann lee", Status: "paid", PaidBy: "card", From: 10, To: 20, Cursor: "c", Limit: 25,
+			})
+		}, want: "GET " + eventBase + "/orders?cursor=c&from=10&limit=25&paidBy=card&q=ann+lee&status=paid&to=20"},
+		{group: "orders", name: "RetrieveEventOrder", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.RetrieveEventOrder(ctx, "ev/1", "ord/1")
+		}, want: "GET " + eventBase + "/orders/ord%2F1"},
+		{group: "orders", name: "ExportEventOrdersCSV", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.ExportEventOrdersCSV(ctx, "ev/1", &EventOrderExportParams{
+				Q: "ann", Status: "paid", PaidBy: "card", From: 10, To: 20,
+			})
+		}, want: "GET " + eventBase + "/orders.csv?from=10&paidBy=card&q=ann&status=paid&to=20", response: "order\nord_1\n"},
+		{group: "orders", name: "RefundEventOrder", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.RefundEventOrder(ctx, "ev/1", "ord/1", &OrderRefundParams{AmountMinor: 250})
+		}, want: "POST " + eventBase + "/orders/ord%2F1/refund", body: `{"amountMinor":250}`, replay: true},
+		{group: "orders", name: "CancelEventOrder", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.CancelEventOrder(ctx, "ev/1", "ord/1", OrderCancelParams{
+				Reason: "lost_dispute", UsedTicketsAcknowledged: true, NotifyBuyer: &yes, IdempotencyKey: "cancel-event-1",
+			})
+		}, want: "POST " + eventBase + "/orders/ord%2F1/cancel",
+			body:   `{"reason":"lost_dispute","usedTicketsAcknowledged":true,"notifyBuyer":true}`,
+			replay: true, key: "cancel-event-1"},
+		{group: "orders", name: "ResendEventOrderTickets", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Orders.ResendEventOrderTickets(ctx, "ev/1", "ord/1", nil)
+		}, want: "POST " + eventBase + "/orders/ord%2F1/resend"},
+
+		// ---------- event sales (14), on Events ----------
+		{group: "eventSales", name: "RetrieveBuyerCheckout", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.RetrieveBuyerCheckout(ctx, "ev/1")
+		}, want: "GET " + eventBase + "/buyer-checkout"},
+		{group: "eventSales", name: "ReplaceBuyerCheckout", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.ReplaceBuyerCheckout(ctx, "ev/1", EventBuyerCheckoutParams{BuyerCheckout: "seatlayer"})
+		}, want: "PUT " + eventBase + "/buyer-checkout", body: `{"buyerCheckout":"seatlayer","expectedRevision":0}`},
+		{group: "eventSales", name: "RetrievePaymentGateway", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.RetrievePaymentGateway(ctx, "ev/1", "EUR")
+		}, want: "GET " + eventBase + "/payment-gateway?currency=EUR"},
+		{group: "eventSales", name: "ReplacePaymentGateway", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.ReplacePaymentGateway(ctx, "ev/1", &EventPaymentGatewayParams{
+				ConnectionID: FieldValue("conn_1"), Provider: FieldNull[string](),
+			})
+		}, want: "PUT " + eventBase + "/payment-gateway", body: `{"connectionId":"conn_1","provider":null}`},
+		{group: "eventSales", name: "RetrieveSalesReadiness", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.RetrieveSalesReadiness(ctx, "ev/1")
+		}, want: "GET " + eventBase + "/sales/readiness"},
+		{group: "eventSales", name: "PreflightSales", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.PreflightSales(ctx, "ev/1", "ord_1")
+		}, want: "POST " + eventBase + "/sales/preflight", body: `{"orderId":"ord_1"}`},
+		{group: "eventSales", name: "TransitionSales", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.TransitionSales(ctx, "ev/1", EventSalesTransitionParams{To: "live", ExpectedRevision: 3, Reason: "go"})
+		}, want: "POST " + eventBase + "/sales/transition", body: `{"to":"live","expectedRevision":3,"reason":"go"}`},
+		{group: "eventSales", name: "RetrieveBookingFee", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.RetrieveBookingFee(ctx, "ev/1")
+		}, want: "GET " + eventBase + "/booking-fee"},
+		{group: "eventSales", name: "ReplaceBookingFee", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.ReplaceBookingFee(ctx, "ev/1", 150)
+		}, want: "PUT " + eventBase + "/booking-fee", body: `{"bookingFeeMinor":150}`},
+		{group: "eventSales", name: "ListDiscountCodes", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.ListDiscountCodes(ctx, "ev/1")
+		}, want: "GET " + eventBase + "/discount-codes"},
+		{group: "eventSales", name: "CreateDiscountCode", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.CreateDiscountCode(ctx, "ev/1", EventDiscountCodeCreateParams{
+				Code: "EARLY", Kind: "percent", Percent: 10, MaxUses: 100, Active: &no,
+			})
+		}, want: "POST " + eventBase + "/discount-codes",
+			body: `{"code":"EARLY","kind":"percent","percent":10,"maxUses":100,"active":false}`, status: 201},
+		{group: "eventSales", name: "UpdateDiscountCode", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.UpdateDiscountCode(ctx, "ev/1", "code/1", EventDiscountCodeUpdateParams{
+				State: "paused", EndsAt: FieldNull[int64](), MaxUses: FieldValue(5),
+			})
+		}, want: "PATCH " + eventBase + "/discount-codes/code%2F1", body: `{"state":"paused","endsAt":null,"maxUses":5}`},
+		{group: "eventSales", name: "EndDiscountCode", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Events.EndDiscountCode(ctx, "ev/1", "code/1")
+		}, want: "POST " + eventBase + "/discount-codes/code%2F1/end"},
+		{group: "eventSales", name: "DeleteDiscountCode", call: func(ctx context.Context, c *Client) (any, error) {
+			return nil, c.Events.DeleteDiscountCode(ctx, "ev/1", "code/1")
+		}, want: "DELETE " + eventBase + "/discount-codes/code%2F1", status: 204},
+
+		// ---------- event series (5) ----------
+		{group: "eventSeries", name: "Create", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.EventSeries.Create(ctx, EventSeriesCreateParams{
+				Name: "Hamlet", ChartKey: "chart_1",
+				Schedule: EventSeriesSchedule{Rule: "weekly", From: "2027-01-04", Count: 4, Times: []string{"19:30"}},
+				Timezone: "Europe/London", DurationMinutes: 150, DryRun: true,
+			})
+		}, want: "POST /v1/event-series",
+			body: `{"name":"Hamlet","chartKey":"chart_1","schedule":{"rule":"weekly","from":"2027-01-04","count":4,` +
+				`"times":["19:30"]},"timezone":"Europe/London","durationMinutes":150,"dryRun":true}`,
+			replay: true, status: 202},
+		{group: "eventSeries", name: "List", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.EventSeries.List(ctx, &EventSeriesListParams{Limit: 10, Cursor: "c/1"})
+		}, want: "GET /v1/event-series?cursor=c%2F1&limit=10"},
+		{group: "eventSeries", name: "Retrieve", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.EventSeries.Retrieve(ctx, "ev/1")
+		}, want: "GET /v1/event-series/ev%2F1"},
+		{group: "eventSeries", name: "AddDates", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.EventSeries.AddDates(ctx, "ev/1", EventSeriesDatesParams{
+				Dates: []string{"2027-02-01T19:30"}, IdempotencyKey: "dates-1",
+			})
+		}, want: "POST /v1/event-series/ev%2F1/dates", body: `{"dates":["2027-02-01T19:30"]}`,
+			replay: true, key: "dates-1", status: 202},
+		{group: "eventSeries", name: "Update", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.EventSeries.Update(ctx, "ev/1", EventSeriesUpdateParams{
+				Name: "Hamlet (revival)", Sales: "off",
+				Prices: &EventSeriesPrices{Categories: []EventSeriesPriceCategory{
+					{Key: "cat_a", Price: FieldValue(45.5), Tiers: []EventSeriesPriceTier{{ID: "t1", Price: 40}}},
+					{Key: "cat_b", Price: FieldNull[float64]()},
+				}},
+			})
+		}, want: "PATCH /v1/event-series/ev%2F1",
+			body: `{"name":"Hamlet (revival)","sales":"off","prices":{"categories":[` +
+				`{"key":"cat_a","price":45.5,"tiers":[{"id":"t1","price":40}]},{"key":"cat_b","price":null}]}}`,
+			replay: true},
+	}
+}
+
+func requestLine(r recorded) string {
+	line := r.method + " " + r.escapedPath
+	if r.query != "" {
+		line += "?" + r.query
+	}
+	return line
+}
+
+func assertJSONBody(t *testing.T, got, want string) {
+	t.Helper()
+	if want == "" {
+		if got != "" {
+			t.Fatalf("body = %s, want none", got)
+		}
+		return
+	}
+	var gotValue, wantValue any
+	if err := json.Unmarshal([]byte(got), &gotValue); err != nil {
+		t.Fatalf("body %q is not JSON: %v", got, err)
+	}
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("bad expected body %q: %v", want, err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+}
+
+func TestSeason2aOperationsCoverTheSpec(t *testing.T) {
+	counts := map[string]int{}
+	for _, tc := range newOperationCases() {
+		counts[tc.group]++
+	}
+	want := map[string]int{"seasons": 32, "holders": 11, "orders": 9, "eventSales": 14, "eventSeries": 5}
+	if !reflect.DeepEqual(counts, want) {
+		t.Fatalf("operation cases per group = %v, want %v (71 in all)", counts, want)
+	}
+}
+
+func TestSeason2aOperationsSendExactRequests(t *testing.T) {
+	for _, tc := range newOperationCases() {
+		t.Run(tc.group+"/"+tc.name, func(t *testing.T) {
+			client, calls := newTestClient(t, []stub{tc.stub()})
+			if _, err := tc.call(context.Background(), client); err != nil {
+				t.Fatalf("call failed: %v", err)
+			}
+			if len(*calls) != 1 {
+				t.Fatalf("requests = %d, want 1", len(*calls))
+			}
+			got := call(t, calls, 0)
+			if line := requestLine(got); line != tc.want {
+				t.Fatalf("request = %q, want %q", line, tc.want)
+			}
+			assertJSONBody(t, got.body, tc.body)
+			if tc.body != "" && got.header.Get("Content-Type") != "application/json" {
+				t.Fatalf("Content-Type = %q", got.header.Get("Content-Type"))
+			}
+			key := got.header.Get("Idempotency-Key")
+			switch {
+			case tc.replay && key == "":
+				t.Fatal("header-replay operation sent no Idempotency-Key")
+			case tc.replay && tc.key != "" && key != tc.key:
+				t.Fatalf("Idempotency-Key = %q, want caller key %q", key, tc.key)
+			case !tc.replay && key != "":
+				t.Fatalf("operation unexpectedly sent Idempotency-Key %q", key)
+			}
+		})
+	}
+}
+
+// Header-replay operations retry with the same key; reads retry; every other
+// mutation (domain-exact and unsupported alike) is single-attempt.
+func TestSeason2aOperationsRetryOnlyWhenReplaySafe(t *testing.T) {
+	for _, tc := range newOperationCases() {
+		t.Run(tc.group+"/"+tc.name, func(t *testing.T) {
+			limited := stub{status: 429, body: `{"error":"rate_limited"}`, headers: map[string]string{"Retry-After": "0"}}
+			client, calls := newTestClient(t, []stub{limited, tc.stub()})
+			_, err := tc.call(context.Background(), client)
+			read := strings.HasPrefix(tc.want, "GET ")
+			if tc.replay || read {
+				if err != nil {
+					t.Fatalf("retried call failed: %v", err)
+				}
+				if len(*calls) != 2 {
+					t.Fatalf("attempts = %d, want 2", len(*calls))
+				}
+				first := call(t, calls, 0).header.Get("Idempotency-Key")
+				if second := call(t, calls, 1).header.Get("Idempotency-Key"); first != second {
+					t.Fatalf("retry changed Idempotency-Key: %q then %q", first, second)
+				}
+				return
+			}
+			var limitedErr *RateLimitError
+			if !errors.As(err, &limitedErr) {
+				t.Fatalf("want RateLimitError, got %v", err)
+			}
+			if len(*calls) != 1 {
+				t.Fatalf("single-attempt operation made %d attempts", len(*calls))
+			}
+		})
+	}
+}
+
+func TestCSVExportsReturnRawText(t *testing.T) {
+	csv := "name,email\r\n\"Lee, Ann\",ann@example.com\r\n"
+	text := stub{status: 200, body: csv, headers: map[string]string{"Content-Type": "text/csv; charset=utf-8"}}
+	client, calls := newTestClient(t, []stub{text, text, text})
+	ctx := context.Background()
+
+	holders, err := client.Seasons.ExportHoldersCSV(ctx, "sea/a", nil)
+	if err != nil || holders != csv {
+		t.Fatalf("ExportHoldersCSV = %q, %v", holders, err)
+	}
+	orders, err := client.Seasons.ExportOrdersCSV(ctx, "sea/a")
+	if err != nil || orders != csv {
+		t.Fatalf("ExportOrdersCSV = %q, %v", orders, err)
+	}
+	eventOrders, err := client.Orders.ExportEventOrdersCSV(ctx, "ev/1", nil)
+	if err != nil || eventOrders != csv {
+		t.Fatalf("ExportEventOrdersCSV = %q, %v", eventOrders, err)
+	}
+	for i := range 3 {
+		got := call(t, calls, i)
+		if got.query != "" {
+			t.Fatalf("call %d sent query %q with nil params", i, got.query)
+		}
+		if accept := got.header.Get("Accept"); accept != "text/csv" {
+			t.Fatalf("call %d Accept = %q, want text/csv", i, accept)
+		}
+	}
+}
+
+func TestCSVExportErrorsStayTyped(t *testing.T) {
+	client, _ := newTestClient(t, []stub{{status: 404, body: `{"error":"not_found","message":"no season"}`}})
+	text, err := client.Seasons.ExportOrdersCSV(context.Background(), "missing")
+	var notFound *NotFoundError
+	if text != "" || !errors.As(err, &notFound) {
+		t.Fatalf("want NotFoundError and no text, got %q, %v", text, err)
+	}
+}
+
+func TestNoContentDeletesReturnOnlyNil(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 204}, {status: 204}})
+	ctx := context.Background()
+	if err := client.Seasons.DeletePlan(ctx, "sea/a", "plan/1", "delete-plan-1"); err != nil {
+		t.Fatalf("DeletePlan: %v", err)
+	}
+	if err := client.Events.DeleteDiscountCode(ctx, "ev/1", "code/1"); err != nil {
+		t.Fatalf("DeleteDiscountCode: %v", err)
+	}
+	if got := call(t, calls, 0).header.Get("Idempotency-Key"); got != "delete-plan-1" {
+		t.Fatalf("DeletePlan Idempotency-Key = %q", got)
+	}
+	if got := call(t, calls, 1).header.Get("Idempotency-Key"); got != "" {
+		t.Fatalf("DeleteDiscountCode sent Idempotency-Key %q", got)
+	}
+}
+
+func TestOptionalBodiesAreOmittedWhenNil(t *testing.T) {
+	responses := make([]stub, 8)
+	for i := range responses {
+		responses[i] = stub{status: 200, body: `{}`}
+	}
+	client, calls := newTestClient(t, responses)
+	ctx := context.Background()
+
+	_, _ = client.Seasons.CreateCheckoutTest(ctx, "sea/a", nil)
+	_, _ = client.Seasons.RefundOrder(ctx, "sea/a", "ord/1", nil)
+	_, _ = client.Seasons.CancelOrderDate(ctx, "sea/a", "ord/1", "ev/1", nil)
+	_, _ = client.Seasons.CreateRenewalNotices(ctx, "sea/a", nil)
+	_, _ = client.Holders.RevokeSessions(ctx, "hol/1", nil)
+	_, _ = client.Events.ReplacePaymentGateway(ctx, "ev/1", nil)
+	_, _ = client.Events.ReplaceBookingFee(ctx, "ev/1")
+	_, _ = client.EventSeries.AddDates(ctx, "ev/1", EventSeriesDatesParams{
+		Schedule: &EventSeriesSchedule{Rule: "dates", Dates: []string{"2027-03-01"}, Times: []string{"20:00"}},
+	})
+
+	for i := range 6 {
+		if body := call(t, calls, i).body; body != "" {
+			t.Fatalf("call %d body = %q, want none", i, body)
+		}
+	}
+	assertJSONBody(t, call(t, calls, 6).body, `{"bookingFeeMinor":null}`)
+	assertJSONBody(t, call(t, calls, 7).body,
+		`{"schedule":{"rule":"dates","dates":["2027-03-01"],"times":["20:00"]}}`)
+	if _, err := client.Events.ReplaceBookingFee(ctx, "ev/1", 1, 2); err == nil {
+		t.Fatal("ReplaceBookingFee accepted two values")
+	}
+}
+
+func TestWebhookAcceptsSeasonPlatformEventNames(t *testing.T) {
+	names := []WebhookEventName{
+		WebhookEventSeriesCreated, WebhookEventSeriesDatesAdded,
+		WebhookEventOrderPaid, WebhookEventOrderRefunded, WebhookEventOrderCancelled,
+		WebhookEventCustomerCreated, WebhookEventCustomerEmailChanged,
+		WebhookEventSeasonTicketTransferSent, WebhookEventSeasonTicketTransferred,
+		WebhookEventSeasonTicketTransferCancelled,
+	}
+	client, calls := newTestClient(t, []stub{{status: 201, body: `{"sub":{"id":"wh_1"},"secret":"whsec_once"}`}})
+	if _, err := client.Webhooks.Create(context.Background(), "https://hooks.example", names); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	assertJSONBody(t, call(t, calls, 0).body, `{"url":"https://hooks.example","events":[`+
+		`"series.created","series.dates_added","order.paid","order.refunded","order.cancelled",`+
+		`"customer.created","customer.email_changed","season.ticket.transfer_sent",`+
+		`"season.ticket.transferred","season.ticket.transfer_cancelled"]}`)
+}

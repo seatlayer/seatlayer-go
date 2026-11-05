@@ -124,7 +124,12 @@ func validateWebhookEvents(events []WebhookEventName) error {
 		switch event {
 		case WebhookEventSeatBooked, WebhookEventSeatReleased, WebhookEventSeatBlocked,
 			WebhookEventHoldExpired, WebhookEventHoldCreated, WebhookEventHoldExtended,
-			WebhookEventEventCreated, WebhookEventEventSoldOut:
+			WebhookEventEventCreated, WebhookEventEventSoldOut,
+			WebhookEventSeriesCreated, WebhookEventSeriesDatesAdded,
+			WebhookEventOrderPaid, WebhookEventOrderRefunded, WebhookEventOrderCancelled,
+			WebhookEventCustomerCreated, WebhookEventCustomerEmailChanged,
+			WebhookEventSeasonTicketTransferSent, WebhookEventSeasonTicketTransferred,
+			WebhookEventSeasonTicketTransferCancelled:
 			continue
 		default:
 			return errors.New("seatlayer: events must contain supported webhook event names")

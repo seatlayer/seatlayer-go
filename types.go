@@ -93,6 +93,20 @@ func (p BuyerAccessSessionNullableFields) apply(body map[string]any) {
 	}
 }
 
+// nullableFields adds each field that was set, including explicit nulls.
+func nullableFields(body map[string]any, fields ...struct {
+	key     string
+	value   any
+	present bool
+}) map[string]any {
+	for _, field := range fields {
+		if field.present {
+			body[field.key] = field.value
+		}
+	}
+	return body
+}
+
 func fieldRequestValue[T any](key string, field NullableField[T]) struct {
 	key     string
 	value   any
@@ -121,6 +135,17 @@ const (
 	WebhookEventHoldExtended WebhookEventName = "hold.extended"
 	WebhookEventEventCreated WebhookEventName = "event.created"
 	WebhookEventEventSoldOut WebhookEventName = "event.soldout"
+
+	WebhookEventSeriesCreated                 WebhookEventName = "series.created"
+	WebhookEventSeriesDatesAdded              WebhookEventName = "series.dates_added"
+	WebhookEventOrderPaid                     WebhookEventName = "order.paid"
+	WebhookEventOrderRefunded                 WebhookEventName = "order.refunded"
+	WebhookEventOrderCancelled                WebhookEventName = "order.cancelled"
+	WebhookEventCustomerCreated               WebhookEventName = "customer.created"
+	WebhookEventCustomerEmailChanged          WebhookEventName = "customer.email_changed"
+	WebhookEventSeasonTicketTransferSent      WebhookEventName = "season.ticket.transfer_sent"
+	WebhookEventSeasonTicketTransferred       WebhookEventName = "season.ticket.transferred"
+	WebhookEventSeasonTicketTransferCancelled WebhookEventName = "season.ticket.transfer_cancelled"
 )
 
 const (

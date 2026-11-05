@@ -68,7 +68,11 @@ type SeasonUpdateParams struct {
 	// ReturnCutoffHours is how many hours (0 to 720) before a date starts a
 	// holder can no longer give a seat back. FieldNull means until it starts.
 	ReturnCutoffHours NullableField[int]
-	IdempotencyKey    string
+	// Audience is "embed_only" or "public" (listed on your SeatLayer website;
+	// an ended Season cannot become public, 409 sales_ended). Empty leaves it
+	// unchanged.
+	Audience       string
+	IdempotencyKey string
 }
 
 type SeasonPlanCreateParams struct {
@@ -132,8 +136,9 @@ type SeasonAmendmentParams struct {
 	Kind     string
 	StartsAt int64
 	Name     string
-	// Refund, with Kind "cancel" only, refunds the date's SeatLayer orders as a
-	// job: "none" (the default), "per_date", or "full". Empty leaves it out.
+	// Refund, with Kind "cancel" only, refunds each SeatLayer order's share of
+	// the date as a job: "none" (the default) or "per_date". A whole-order
+	// refund is the order refund. Empty leaves it out.
 	Refund string
 	// Reason is kept on the refund job. Empty leaves it out.
 	Reason         string
@@ -189,7 +194,7 @@ func (s *SeasonsService) Update(
 	ctx context.Context, seasonKey string, p SeasonUpdateParams,
 ) (map[string]any, error) {
 	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name),
-		"checkoutMode", stringOrNil(p.CheckoutMode))
+		"checkoutMode", stringOrNil(p.CheckoutMode), "audience", stringOrNil(p.Audience))
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
 	}
@@ -706,8 +711,9 @@ func (p SeasonRenewalDeclineParams) body() map[string]any {
 // SeasonPerformanceRefundParams refunds every SeatLayer order holding a
 // cancelled date.
 type SeasonPerformanceRefundParams struct {
-	// Amount is "per_date" (the date's share of each order, rounded down) or
-	// "full" (what is left of each order).
+	// Amount is "per_date": the date's share of each order, rounded down.
+	// "full" is refused (422 date_refund_per_date_only); refund a whole order
+	// with Orders.Refund.
 	Amount string
 	// Reason is kept on the job. Empty leaves it out.
 	Reason         string

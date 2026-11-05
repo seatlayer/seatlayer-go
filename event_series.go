@@ -52,8 +52,12 @@ type EventSeriesListParams struct {
 // EventSeriesDatesParams adds dates to a series: set Schedule, or Dates as
 // exact moments (YYYY-MM-DDTHH:MM in the series' zone), not both.
 type EventSeriesDatesParams struct {
-	Schedule       *EventSeriesSchedule
-	Dates          []string
+	Schedule *EventSeriesSchedule
+	Dates    []string
+	// RetryFailed makes again every date that failed to be made (up to 100, as
+	// in job.failedDates): 422 nothing_to_retry when none did, 409 series_busy
+	// while another change runs. Give it alone, without Schedule or Dates.
+	RetryFailed    bool
 	IdempotencyKey string
 }
 
@@ -132,7 +136,7 @@ func (s *EventSeriesService) Retrieve(ctx context.Context, eventKey string) (map
 func (s *EventSeriesService) AddDates(
 	ctx context.Context, eventKey string, p EventSeriesDatesParams,
 ) (map[string]any, error) {
-	body := params("dates", sliceOrNil(p.Dates))
+	body := params("dates", sliceOrNil(p.Dates), "retryFailed", boolOrNil(p.RetryFailed))
 	if p.Schedule != nil {
 		body["schedule"] = *p.Schedule
 	}

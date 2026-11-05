@@ -284,9 +284,9 @@ func newOperationCases() []operationCase {
 		// ---------- orders (9) ----------
 		{group: "orders", name: "List", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Orders.List(ctx, &OrderListParams{
-				EventKey: "ev/1", SeasonKey: "sea/a", Status: "paid", From: 10, To: 20, Cursor: "c", Limit: 25,
+				EventKey: "ev/1", SeasonKey: "sea/a", HolderRef: "ord/1", Status: "paid", From: 10, To: 20, Cursor: "c", Limit: 25,
 			})
-		}, want: "GET /v1/orders?cursor=c&eventKey=ev%2F1&from=10&limit=25&seasonKey=sea%2Fa&status=paid&to=20"},
+		}, want: "GET /v1/orders?cursor=c&eventKey=ev%2F1&from=10&holderRef=ord%2F1&limit=25&seasonKey=sea%2Fa&status=paid&to=20"},
 		{group: "orders", name: "Retrieve", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Orders.Retrieve(ctx, "ord/1")
 		}, want: "GET /v1/orders/ord%2F1"},
@@ -686,7 +686,7 @@ func TestNoContentDeletesReturnOnlyNil(t *testing.T) {
 }
 
 func TestOptionalBodiesAreOmittedWhenNil(t *testing.T) {
-	responses := make([]stub, 8)
+	responses := make([]stub, 9)
 	for i := range responses {
 		responses[i] = stub{status: 200, body: `{}`}
 	}
@@ -703,6 +703,7 @@ func TestOptionalBodiesAreOmittedWhenNil(t *testing.T) {
 	_, _ = client.EventSeries.AddDates(ctx, "ev/1", EventSeriesDatesParams{
 		Schedule: &EventSeriesSchedule{Rule: "dates", Dates: []string{"2027-03-01"}, Times: []string{"20:00"}},
 	})
+	_, _ = client.EventSeries.AddDates(ctx, "ev/1", EventSeriesDatesParams{RetryFailed: true})
 
 	for i := range 6 {
 		if body := call(t, calls, i).body; body != "" {
@@ -712,6 +713,8 @@ func TestOptionalBodiesAreOmittedWhenNil(t *testing.T) {
 	assertJSONBody(t, call(t, calls, 6).body, `{"bookingFeeMinor":null}`)
 	assertJSONBody(t, call(t, calls, 7).body,
 		`{"schedule":{"rule":"dates","dates":["2027-03-01"],"times":["20:00"]}}`)
+	// Make again the dates that failed to be made.
+	assertJSONBody(t, call(t, calls, 8).body, `{"retryFailed":true}`)
 	if _, err := client.Events.ReplaceBookingFee(ctx, "ev/1", 1, 2); err == nil {
 		t.Fatal("ReplaceBookingFee accepted two values")
 	}
@@ -798,7 +801,7 @@ func TestSeasonRequestsSendPriceTypesSaleSettingsContactsAndDateCancels(t *testi
 		},
 	})
 	_, _ = client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{
-		ExpectedRevision: 3, CheckoutMode: "seatlayer",
+		ExpectedRevision: 3, CheckoutMode: "seatlayer", Audience: "public",
 		TransferCutoffHours: FieldValue(24), ReturnCutoffHours: FieldNull[int](),
 	})
 	_, _ = client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{ExpectedRevision: 4, Name: "Renamed"})
@@ -817,7 +820,7 @@ func TestSeasonRequestsSendPriceTypesSaleSettingsContactsAndDateCancels(t *testi
 	assertJSONBody(t, call(t, calls, 0).body, `{"prices":[{"categoryKey":"stalls","unitPrice":18000},`+
 		`{"categoryKey":"stalls","priceTypeKey":"child","unitPrice":9000}]}`)
 	assertJSONBody(t, call(t, calls, 1).body,
-		`{"expectedRevision":3,"checkoutMode":"seatlayer","transferCutoffHours":24,"returnCutoffHours":null}`)
+		`{"expectedRevision":3,"checkoutMode":"seatlayer","audience":"public","transferCutoffHours":24,"returnCutoffHours":null}`)
 	assertJSONBody(t, call(t, calls, 2).body, `{"expectedRevision":4,"name":"Renamed"}`)
 	assertJSONBody(t, call(t, calls, 3).body, `{"successorPlanActivationId":"pa_1","dryRun":false,"rows":[{"rowId":"r1",`+
 		`"holderRef":"h1","priorPlanActivationId":"pa_0","priorContractRef":"c1","labels":["A-1"],`+

@@ -67,6 +67,9 @@ type OrderListParams struct {
 	EventKey string
 	// SeasonKey limits to one Season's orders, renewals included.
 	SeasonKey string
+	// HolderRef limits to one holder's orders: the Season order with this id
+	// and renewals offered to this reference.
+	HolderRef string
 	Status    string
 	// From and To bound the creation time, in epoch milliseconds.
 	From   int64
@@ -117,6 +120,7 @@ func (s *OrdersService) List(ctx context.Context, p *OrderListParams) (map[strin
 	if p != nil {
 		setIfNotEmpty(query, "eventKey", p.EventKey)
 		setIfNotEmpty(query, "seasonKey", p.SeasonKey)
+		setIfNotEmpty(query, "holderRef", p.HolderRef)
 		setIfNotEmpty(query, "status", p.Status)
 		setInt64IfNotZero(query, "from", p.From)
 		setInt64IfNotZero(query, "to", p.To)

@@ -114,11 +114,15 @@ treated as a transient fault to back off through.
 
 ## Fixed Renewable Seasons
 
-`client.Seasons` exposes 86 trusted organizer operations: the 48 added in `v0.7.0`, plus
+`client.Seasons` exposes 87 trusted organizer operations: the 48 added in `v0.7.0`, plus
 performances, package prices (per price type, with the `SeasonPriceType…` constants), one-call
 publishing, checkout tests, the holder list, Season order refunds and cancellations, hosted
 renewals, renewal quotes, intents and checkouts, sales and seat reports, CSV exports, and the bulk refund of a cancelled date
-(`RefundPerformance`) with its jobs (`ListBulkJobs`, `RetrieveBulkJob`).
+(`RefundPerformance`) and release of lapsed offers (`ReleaseLapsedOffers`) with their jobs
+(`ListBulkJobs`, `RetrieveBulkJob`). Above 100 contracts `CreateRenewalOffers` answers `202` with a
+`renewal_run` job and its `batchId`, and above 100 holders `CreateHolderImportFromSeason` answers
+`202` with a `holder_import` job; follow either with `RetrieveBulkJob`. `ListRenewalOffers` and
+`RetrieveHostedRenewals` read one page at a time: pass `SeasonOfferPageParams{Cursor: nextCursor}`.
 `ExportHoldersCSV` and `ExportOrdersCSV` return the CSV text unchanged; `DeletePlan` answers
 `204` and returns only an error.
 
@@ -416,7 +420,7 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Forty mutations use exact header replay:
+`Retry-After` wins when the server sends it. Forty-one mutations use exact header replay:
 `Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
 `Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
 `Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.UpdatePlan`, `Seasons.DeletePlan`,
@@ -426,11 +430,11 @@ requests.
 `Seasons.MarkPerformancePast`, `Seasons.CreateCheckoutTest`, `Seasons.ReplacePackagePrices`,
 `Seasons.AttachPlanPerformance`, `Seasons.DeletePlanPerformance`, `Seasons.RefundOrder`,
 `Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Seasons.RefundPerformance`,
-`Seasons.CreateRenewalCheckout`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
+`Seasons.ReleaseLapsedOffers`, `Seasons.CreateRenewalCheckout`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
 `Holders.CreateRenewalCheckout`, `Orders.RefundEventOrder`,
 `Orders.CancelEventOrder`, `EventSeries.Create`, `EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
 
-**Idempotency.** Those 40 replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those 41 replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
 have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
 includes inventory holds and bookings, show-once credential or secret creation, unsupported
@@ -484,7 +488,7 @@ return the CSV text as a `string`.
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |
 | `Workspaces` | `List` `Create` `Retrieve` `Update` |
 | `PerformanceGroups` | `List` `Create` `Retrieve` `Delete` `Activate` `Close` `RetrieveLifecycle` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `RetrieveHold` `BookHold` `RetrieveBooking` |
-| `Seasons` | 86 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds and jobs, reports and CSV exports, audit, outbox, and support export |
+| `Seasons` | 87 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds, lapsed-offer releases and their jobs, reports and CSV exports, audit, outbox, and support export |
 
 Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
 

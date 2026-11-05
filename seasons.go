@@ -391,6 +391,12 @@ func (s *SeasonsService) RetrieveHolderImport(
 	return s.client.get(ctx, seasonPath(seasonKey, "/imports/"+escape(importID)), nil)
 }
 
+// CreateRenewalOffers makes one renewal offer per eligible prior Contract.
+// For 100 contracts or fewer it answers 201 {"offers": [...]}. Above 100 it
+// answers 202 {"job": ..., "batchId": ...}: a renewal_run job makes the offers.
+// Follow it with RetrieveBulkJob, then read the offers with ListRenewalOffers.
+// It is retried safely with one Idempotency-Key, which answers the same job.
+// It can refuse with 409 job_mismatch or 503 season_not_configured.
 func (s *SeasonsService) CreateRenewalOffers(
 	ctx context.Context, seasonKey string, p SeasonRenewalOffersParams,
 ) (map[string]any, error) {
@@ -402,8 +408,18 @@ func (s *SeasonsService) CreateRenewalOffers(
 		), p.IdempotencyKey)
 }
 
-func (s *SeasonsService) ListRenewalOffers(ctx context.Context, seasonKey string) (map[string]any, error) {
-	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-offers"), nil)
+// ListRenewalOffers reads one page of renewal offers, newest first; the answer's
+// nextCursor reads the next page and is null on the last. Pass one
+// SeasonOfferPageParams to page (Limit 1-100, default 100); existing calls
+// compile unchanged and read the first page.
+func (s *SeasonsService) ListRenewalOffers(
+	ctx context.Context, seasonKey string, options ...SeasonOfferPageParams,
+) (map[string]any, error) {
+	query, err := offerPageQuery("ListRenewalOffers", options)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-offers"), query)
 }
 
 func (s *SeasonsService) RetrieveRenewalOffer(
@@ -667,10 +683,34 @@ type SeasonRenewalContactParams struct {
 	Name  NullableField[string]
 }
 
-// SeasonRenewalNoticesParams limits renewal notices to some offers. Empty
-// OfferIDs leaves the field out.
+// SeasonRenewalNoticesParams limits renewal notices to some offers, at most
+// 20,000. Empty OfferIDs leaves the field out.
 type SeasonRenewalNoticesParams struct {
 	OfferIDs []string
+}
+
+// SeasonOfferPageParams pages renewal offers, newest first. Cursor is the
+// nextCursor of the page before; empty reads the first page. Limit is the page
+// size, 1-100 for ListRenewalOffers and 1-500 for RetrieveHostedRenewals; zero
+// leaves it out for the default (100 and 500). A cursor the list did not give
+// out, or a limit out of range, answers 400 invalid_cursor or invalid_limit.
+type SeasonOfferPageParams struct {
+	Cursor string
+	Limit  int
+}
+
+func offerPageQuery(method string, options []SeasonOfferPageParams) (url.Values, error) {
+	if len(options) > 1 {
+		return nil, errors.New("seatlayer: " + method + " accepts at most one params value")
+	}
+	query := url.Values{}
+	if len(options) == 1 {
+		setIfNotEmpty(query, "cursor", options[0].Cursor)
+		if options[0].Limit > 0 {
+			query.Set("limit", strconv.Itoa(options[0].Limit))
+		}
+	}
+	return query, nil
 }
 
 // SeasonRenewalCheckoutParams starts a SeatLayer checkout that renews an
@@ -721,7 +761,12 @@ type SeasonPerformanceRefundParams struct {
 }
 
 // CreateHolderImportFromSeason dry-runs or commits renewal rights derived from
-// a previous Season's holders.
+// a previous Season's holders. A dry run answers 200 and a commit of 100
+// holders or fewer 201, both {"import": ...}. A commit of more than 100
+// holders answers 202 {"job": ...}: a holder_import job brings them across.
+// Follow it with RetrieveBulkJob; its summary has the same counts when it
+// completes. The same Idempotency-Key answers the same job. It can refuse with
+// 409 job_mismatch, or 503 job_busy or season_not_configured.
 func (s *SeasonsService) CreateHolderImportFromSeason(
 	ctx context.Context, seasonKey string, p SeasonHolderImportFromSeasonParams,
 ) (map[string]any, error) {
@@ -965,9 +1010,18 @@ func (s *SeasonsService) ResendOrderTickets(
 		seasonPath(seasonKey, "/orders/"+escape(orderID)+"/resend"), p.body(), "")
 }
 
-// RetrieveHostedRenewals reads renewal links, payments and emails per offer.
-func (s *SeasonsService) RetrieveHostedRenewals(ctx context.Context, seasonKey string) (map[string]any, error) {
-	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-hosted"), nil)
+// RetrieveHostedRenewals reads renewal links, payments and emails for one page
+// of renewal offers, newest first; the answer's nextCursor reads the next page
+// and is null on the last. Pass one SeasonOfferPageParams to page (Limit 1-500,
+// default 500).
+func (s *SeasonsService) RetrieveHostedRenewals(
+	ctx context.Context, seasonKey string, options ...SeasonOfferPageParams,
+) (map[string]any, error) {
+	query, err := offerPageQuery("RetrieveHostedRenewals", options)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-hosted"), query)
 }
 
 // RotateRenewalOfferLink makes a new renewal link for one holder; the old link
@@ -991,7 +1045,9 @@ func (s *SeasonsService) UpdateRenewalOfferContact(
 }
 
 // CreateRenewalNotices emails renewal invitations now and reminders before the
-// deadline. It is single-attempt. Pass nil to send no body.
+// deadline. It is single-attempt. Pass nil to send no body, which emails every
+// open offer. It takes up to 20,000 offer ids; more answers 422
+// too_many_offer_ids.
 func (s *SeasonsService) CreateRenewalNotices(
 	ctx context.Context, seasonKey string, p *SeasonRenewalNoticesParams,
 ) (map[string]any, error) {
@@ -1083,12 +1139,27 @@ func (s *SeasonsService) RefundPerformance(
 		params("amount", p.Amount, "reason", stringOrNil(p.Reason)), p.IdempotencyKey)
 }
 
+// ReleaseLapsedOffers releases the seats of every lapsed renewal offer, as a
+// job; the answer is 202 {"job": ...}. An offer extended before its turn is
+// skipped and keeps its seat. Follow it with RetrieveBulkJob. It is retried
+// safely with one Idempotency-Key, which replays the same job; an empty
+// idempotencyKey generates one.
+func (s *SeasonsService) ReleaseLapsedOffers(
+	ctx context.Context, seasonKey, idempotencyKey string,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/renewal-offers/release-lapsed"), nil, idempotencyKey)
+}
+
 // ListBulkJobs lists the Season's bulk jobs, newest first (100 at most).
 func (s *SeasonsService) ListBulkJobs(ctx context.Context, seasonKey string) (map[string]any, error) {
 	return s.client.get(ctx, seasonPath(seasonKey, "/jobs"), nil)
 }
 
 // RetrieveBulkJob reads one bulk job with its counts and up to 500 failed items.
+// Its summary is what the job ended with, empty until it completes: for a
+// holder_import job the bring-across counts, for a renewal_run job batchId,
+// offered, skipped and failed.
 func (s *SeasonsService) RetrieveBulkJob(ctx context.Context, seasonKey, jobID string) (map[string]any, error) {
 	return s.client.get(ctx, seasonPath(seasonKey, "/jobs/"+escape(jobID)), nil)
 }

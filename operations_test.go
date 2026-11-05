@@ -47,7 +47,7 @@ func newOperationCases() []operationCase {
 	const eventBase = "/v1/events/ev%2F1"
 
 	return []operationCase{
-		// ---------- seasons (38) ----------
+		// ---------- seasons (39) ----------
 		{group: "seasons", name: "CreateHolderImportFromSeason", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.CreateHolderImportFromSeason(ctx, season, SeasonHolderImportFromSeasonParams{
 				SourceSeasonID: "sea_2026", SuccessorPlanActivationID: "pa_1", DryRun: &yes, IdempotencyKey: "import-season-1",
@@ -191,6 +191,11 @@ func newOperationCases() []operationCase {
 			body:   `{"amount":"per_date","reason":"Storm"}`,
 			replay: true, key: "refund-date-1", status: 202,
 			response: `{"job":{"jobId":"sbj_1","kind":"bulk_refund","state":"planning"}}`},
+		{group: "seasons", name: "ReleaseLapsedOffers", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ReleaseLapsedOffers(ctx, season, "release-lapsed-1")
+		}, want: "POST " + seasonBase + "/renewal-offers/release-lapsed",
+			replay: true, key: "release-lapsed-1", status: 202,
+			response: `{"job":{"jobId":"sbj_2","kind":"lapsed_release","state":"planning"}}`},
 		{group: "seasons", name: "ListBulkJobs", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.ListBulkJobs(ctx, season)
 		}, want: "GET " + seasonBase + "/jobs", response: `{"jobs":[]}`},
@@ -442,9 +447,9 @@ func TestSeason2aOperationsCoverTheSpec(t *testing.T) {
 	for _, tc := range newOperationCases() {
 		counts[tc.group]++
 	}
-	want := map[string]int{"seasons": 38, "holders": 14, "orders": 9, "eventSales": 14, "eventSeries": 5}
+	want := map[string]int{"seasons": 39, "holders": 14, "orders": 9, "eventSales": 14, "eventSeries": 5}
 	if !reflect.DeepEqual(counts, want) {
-		t.Fatalf("operation cases per group = %v, want %v (80 in all)", counts, want)
+		t.Fatalf("operation cases per group = %v, want %v (81 in all)", counts, want)
 	}
 }
 
@@ -831,4 +836,123 @@ func TestSeasonRequestsSendPriceTypesSaleSettingsContactsAndDateCancels(t *testi
 		t.Fatalf("amendment Idempotency-Key = %q", key)
 	}
 	assertJSONBody(t, call(t, calls, 5).body, `{"eventKey":"ev_1","kind":"postpone"}`)
+}
+
+// The renewal offer list and the hosted renewals page with a cursor and a
+// limit; with no params they read the first page and send no query.
+func TestRenewalOfferPagesSendCursorAndLimit(t *testing.T) {
+	page := stub{status: 200, body: `{"offers":[],"truncated":false,"nextCursor":"c/2"}`}
+	client, calls := newTestClient(t, []stub{page, page, page, page})
+	ctx := context.Background()
+
+	got, err := client.Seasons.ListRenewalOffers(ctx, "sea/a", SeasonOfferPageParams{Cursor: "c/1", Limit: 50})
+	if err != nil {
+		t.Fatalf("ListRenewalOffers: %v", err)
+	}
+	if got["nextCursor"] != "c/2" {
+		t.Fatalf("nextCursor = %v, want c/2", got["nextCursor"])
+	}
+	_, _ = client.Seasons.ListRenewalOffers(ctx, "sea/a")
+	_, _ = client.Seasons.RetrieveHostedRenewals(ctx, "sea/a", SeasonOfferPageParams{Cursor: "c/1", Limit: 500})
+	_, _ = client.Seasons.RetrieveHostedRenewals(ctx, "sea/a", SeasonOfferPageParams{Cursor: "c/1"})
+
+	lines := []string{
+		"GET /v1/seasons/sea%2Fa/renewal-offers?cursor=c%2F1&limit=50",
+		"GET /v1/seasons/sea%2Fa/renewal-offers",
+		"GET /v1/seasons/sea%2Fa/renewal-hosted?cursor=c%2F1&limit=500",
+		"GET /v1/seasons/sea%2Fa/renewal-hosted?cursor=c%2F1",
+	}
+	for i, line := range lines {
+		if got := requestLine(call(t, calls, i)); got != line {
+			t.Fatalf("call %d = %q, want %q", i, got, line)
+		}
+	}
+	two := []SeasonOfferPageParams{{Limit: 1}, {Limit: 2}}
+	if _, err := client.Seasons.ListRenewalOffers(ctx, "sea/a", two...); err == nil {
+		t.Fatal("ListRenewalOffers accepted two params values")
+	}
+	if _, err := client.Seasons.RetrieveHostedRenewals(ctx, "sea/a", two...); err == nil {
+		t.Fatal("RetrieveHostedRenewals accepted two params values")
+	}
+	if len(*calls) != 4 {
+		t.Fatalf("requests = %d, want 4", len(*calls))
+	}
+}
+
+// Above 100 contracts or holders the renewal run and the bring-across answer
+// 202 with the job that does the work; the renewal run also names its batch.
+func TestRenewalRunAndBringAcrossAnswerAJobAbove100(t *testing.T) {
+	client, calls := newTestClient(t, []stub{
+		{status: 202, body: `{"job":{"jobId":"sbj_1","kind":"renewal_run","state":"planning"},"batchId":"srb_1"}`},
+		{status: 202, body: `{"job":{"jobId":"sbj_2","kind":"holder_import","state":"planning"}}`},
+	})
+	ctx := context.Background()
+
+	run, err := client.Seasons.CreateRenewalOffers(ctx, "sea/a", SeasonRenewalOffersParams{DeadlineAt: 123})
+	if err != nil {
+		t.Fatalf("CreateRenewalOffers: %v", err)
+	}
+	if job, ok := run["job"].(map[string]any); !ok || job["kind"] != "renewal_run" || run["batchId"] != "srb_1" {
+		t.Fatalf("renewal run = %v, want the job and its batchId", run)
+	}
+	imported, err := client.Seasons.CreateHolderImportFromSeason(ctx, "sea/a", SeasonHolderImportFromSeasonParams{
+		SourceSeasonID: "sea_2026", SuccessorPlanActivationID: "pa_1",
+	})
+	if err != nil {
+		t.Fatalf("CreateHolderImportFromSeason: %v", err)
+	}
+	if job, ok := imported["job"].(map[string]any); !ok || job["kind"] != "holder_import" {
+		t.Fatalf("bring-across = %v, want the holder_import job", imported)
+	}
+	for i := range 2 {
+		if call(t, calls, i).header.Get("Idempotency-Key") == "" {
+			t.Fatalf("call %d sent no Idempotency-Key", i)
+		}
+	}
+}
+
+// Releasing lapsed offers sends no body and keeps one key across a retry,
+// generated or the caller's.
+func TestReleaseLapsedOffersKeepsOneKeyAcrossRetry(t *testing.T) {
+	unavailable := stub{status: 503, body: `{"error":"job_busy"}`, headers: map[string]string{"Retry-After": "0"}}
+	accepted := stub{status: 202, body: `{"job":{"jobId":"sbj_1","kind":"lapsed_release","state":"planning"}}`}
+	client, calls := newTestClient(t, []stub{unavailable, accepted, unavailable, accepted})
+	ctx := context.Background()
+
+	got, err := client.Seasons.ReleaseLapsedOffers(ctx, "sea/a", "")
+	if err != nil {
+		t.Fatalf("ReleaseLapsedOffers: %v", err)
+	}
+	if job, ok := got["job"].(map[string]any); !ok || job["jobId"] != "sbj_1" {
+		t.Fatalf("result = %v, want the job", got)
+	}
+	if _, err := client.Seasons.ReleaseLapsedOffers(ctx, "sea_1", "release-1"); err != nil {
+		t.Fatalf("ReleaseLapsedOffers with a key: %v", err)
+	}
+	if len(*calls) != 4 {
+		t.Fatalf("attempts = %d, want 4", len(*calls))
+	}
+	for i, line := range []string{
+		"POST /v1/seasons/sea%2Fa/renewal-offers/release-lapsed",
+		"POST /v1/seasons/sea%2Fa/renewal-offers/release-lapsed",
+		"POST /v1/seasons/sea_1/renewal-offers/release-lapsed",
+		"POST /v1/seasons/sea_1/renewal-offers/release-lapsed",
+	} {
+		sent := call(t, calls, i)
+		if got := requestLine(sent); got != line {
+			t.Fatalf("attempt %d request = %q, want %q", i, got, line)
+		}
+		if sent.body != "" {
+			t.Fatalf("attempt %d body = %q, want none", i, sent.body)
+		}
+	}
+	first := call(t, calls, 0).header.Get("Idempotency-Key")
+	if first == "" || call(t, calls, 1).header.Get("Idempotency-Key") != first {
+		t.Fatalf("generated key not reused: %q then %q", first, call(t, calls, 1).header.Get("Idempotency-Key"))
+	}
+	for i := 2; i < 4; i++ {
+		if key := call(t, calls, i).header.Get("Idempotency-Key"); key != "release-1" {
+			t.Fatalf("attempt %d Idempotency-Key = %q, want release-1", i, key)
+		}
+	}
 }

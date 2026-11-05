@@ -598,6 +598,22 @@ func TestAllEventsSkipsCountsFanout(t *testing.T) {
 	}
 }
 
+func TestEventsFilterBySeries(t *testing.T) {
+	client, calls := newTestClient(t, []stub{
+		{status: 200, body: `{"events":[]}`},
+		{status: 200, body: `{"events":[]}`},
+	})
+	_, _ = client.Events.List(context.Background(), &EventListParams{SeriesKey: "ser a/b", Limit: 10})
+	if got := call(t, calls, 0).query; got != "limit=10&seriesKey=ser+a%2Fb" {
+		t.Fatalf("query = %q", got)
+	}
+	for range client.Events.All(context.Background(), &EventListParams{SeriesKey: "ser_1"}) {
+	}
+	if got := call(t, calls, 1).query; got != "counts=0&seriesKey=ser_1" {
+		t.Fatalf("All query = %q", got)
+	}
+}
+
 func TestSinglePageKeepsCounts(t *testing.T) {
 	client, calls := newTestClient(t, []stub{{status: 200, body: `{"events":[]}`}})
 	_, _ = client.Events.List(context.Background(), &EventListParams{Limit: 10})

@@ -57,7 +57,17 @@ type SeasonUpdateParams struct {
 	ExpectedRevision int
 	Name             string
 	Edition          NullableField[string]
-	IdempotencyKey   string
+	// CheckoutMode is who takes the money: "seatlayer" or "server". Empty
+	// leaves it unchanged; it cannot go back to undecided, and it is fixed once
+	// a live booking exists.
+	CheckoutMode string
+	// TransferCutoffHours is how many hours (0 to 720) before a date starts its
+	// tickets stop being sent to others. FieldNull means until it starts.
+	TransferCutoffHours NullableField[int]
+	// ReturnCutoffHours is how many hours (0 to 720) before a date starts a
+	// holder can no longer give a seat back. FieldNull means until it starts.
+	ReturnCutoffHours NullableField[int]
+	IdempotencyKey    string
 }
 
 type SeasonPlanCreateParams struct {
@@ -95,6 +105,9 @@ type SeasonHolderImportRow struct {
 	PriorContractRef      string   `json:"priorContractRef"`
 	Labels                []string `json:"labels"`
 	ExistingBookingRef    *string  `json:"existingBookingRef,omitempty"`
+	// HolderEmail and HolderName are where the holder's renewal emails go.
+	HolderEmail *string `json:"holderEmail,omitempty"`
+	HolderName  *string `json:"holderName,omitempty"`
 }
 
 type SeasonHolderImportParams struct {
@@ -112,10 +125,17 @@ type SeasonRenewalOffersParams struct {
 }
 
 type SeasonAmendmentParams struct {
-	EventKey       string
-	Kind           string
-	StartsAt       int64
-	Name           string
+	EventKey string
+	// Kind is "reschedule", "replace", "cancel_exception", "postpone" (the
+	// date stays with no new time yet), or "cancel" (it will not happen).
+	Kind     string
+	StartsAt int64
+	Name     string
+	// Refund, with Kind "cancel" only, refunds the date's SeatLayer orders as a
+	// job: "none" (the default), "per_date", or "full". Empty leaves it out.
+	Refund string
+	// Reason is kept on the refund job. Empty leaves it out.
+	Reason         string
 	IdempotencyKey string
 }
 
@@ -167,9 +187,16 @@ func (s *SeasonsService) Retrieve(ctx context.Context, seasonKey string) (map[st
 func (s *SeasonsService) Update(
 	ctx context.Context, seasonKey string, p SeasonUpdateParams,
 ) (map[string]any, error) {
-	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name))
+	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name),
+		"checkoutMode", stringOrNil(p.CheckoutMode))
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
+	}
+	if value, present := p.TransferCutoffHours.requestValue(); present {
+		body["transferCutoffHours"] = value
+	}
+	if value, present := p.ReturnCutoffHours.requestValue(); present {
+		body["returnCutoffHours"] = value
 	}
 	return s.client.mutationHeaderReplay(
 		ctx, http.MethodPatch, seasonPath(seasonKey, ""), body, p.IdempotencyKey)
@@ -431,6 +458,8 @@ func (s *SeasonsService) CreateAmendment(
 			"kind", p.Kind,
 			"startsAt", int64OrNil(p.StartsAt),
 			"name", stringOrNil(p.Name),
+			"refund", stringOrNil(p.Refund),
+			"reason", stringOrNil(p.Reason),
 		), p.IdempotencyKey)
 }
 
@@ -536,10 +565,22 @@ type SeasonCheckoutTestParams struct {
 	IdempotencyKey string
 }
 
+// The price types a package can price a category for.
+const (
+	SeasonPriceTypeAdult      = "adult"
+	SeasonPriceTypeChild      = "child"
+	SeasonPriceTypeConcession = "concession"
+	SeasonPriceTypeSenior     = "senior"
+	SeasonPriceTypeStudent    = "student"
+)
+
 // SeasonPackagePrice is one category price, in minor units, for a package.
 type SeasonPackagePrice struct {
 	CategoryKey string `json:"categoryKey"`
-	UnitPrice   int64  `json:"unitPrice"`
+	// PriceTypeKey is one of the SeasonPriceType constants. Empty leaves it
+	// out, which prices the category for adults. Each category takes each type once.
+	PriceTypeKey string `json:"priceTypeKey,omitempty"`
+	UnitPrice    int64  `json:"unitPrice"`
 }
 
 // SeasonPackagePricesParams replaces every category price of a package.
@@ -615,6 +656,17 @@ type SeasonRenewalContactParams struct {
 // OfferIDs leaves the field out.
 type SeasonRenewalNoticesParams struct {
 	OfferIDs []string
+}
+
+// SeasonPerformanceRefundParams refunds every SeatLayer order holding a
+// cancelled date.
+type SeasonPerformanceRefundParams struct {
+	// Amount is "per_date" (the date's share of each order, rounded down) or
+	// "full" (what is left of each order).
+	Amount string
+	// Reason is kept on the job. Empty leaves it out.
+	Reason         string
+	IdempotencyKey string
 }
 
 // CreateHolderImportFromSeason dry-runs or commits renewal rights derived from
@@ -939,4 +991,25 @@ func (s *SeasonsService) ExportOrdersCSV(ctx context.Context, seasonKey string) 
 // RetrieveSeatCounts reads Season seats sold per package and per date.
 func (s *SeasonsService) RetrieveSeatCounts(ctx context.Context, seasonKey string) (map[string]any, error) {
 	return s.client.get(ctx, seasonPath(seasonKey, "/seat-counts"), nil)
+}
+
+// RefundPerformance refunds every SeatLayer order holding a cancelled date, as
+// a job; the answer is {"job": ...}. Follow it with RetrieveBulkJob. It is
+// retried safely with one Idempotency-Key, which replays the same job.
+func (s *SeasonsService) RefundPerformance(
+	ctx context.Context, seasonKey, eventKey string, p SeasonPerformanceRefundParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/performances/"+escape(eventKey)+"/refunds"),
+		params("amount", p.Amount, "reason", stringOrNil(p.Reason)), p.IdempotencyKey)
+}
+
+// ListBulkJobs lists the Season's bulk jobs, newest first (100 at most).
+func (s *SeasonsService) ListBulkJobs(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/jobs"), nil)
+}
+
+// RetrieveBulkJob reads one bulk job with its counts and up to 500 failed items.
+func (s *SeasonsService) RetrieveBulkJob(ctx context.Context, seasonKey, jobID string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/jobs/"+escape(jobID)), nil)
 }

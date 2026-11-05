@@ -47,7 +47,7 @@ func newOperationCases() []operationCase {
 	const eventBase = "/v1/events/ev%2F1"
 
 	return []operationCase{
-		// ---------- seasons (32) ----------
+		// ---------- seasons (35) ----------
 		{group: "seasons", name: "CreateHolderImportFromSeason", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.CreateHolderImportFromSeason(ctx, season, SeasonHolderImportFromSeasonParams{
 				SourceSeasonID: "sea_2026", SuccessorPlanActivationID: "pa_1", DryRun: &yes, IdempotencyKey: "import-season-1",
@@ -183,6 +183,20 @@ func newOperationCases() []operationCase {
 		{group: "seasons", name: "RetrieveSeatCounts", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.RetrieveSeatCounts(ctx, season)
 		}, want: "GET " + seasonBase + "/seat-counts"},
+		{group: "seasons", name: "RefundPerformance", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RefundPerformance(ctx, season, "ev/1", SeasonPerformanceRefundParams{
+				Amount: "per_date", Reason: "Storm", IdempotencyKey: "refund-date-1",
+			})
+		}, want: "POST " + seasonBase + "/performances/ev%2F1/refunds",
+			body:   `{"amount":"per_date","reason":"Storm"}`,
+			replay: true, key: "refund-date-1", status: 202,
+			response: `{"job":{"jobId":"sbj_1","kind":"bulk_refund","state":"planning"}}`},
+		{group: "seasons", name: "ListBulkJobs", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ListBulkJobs(ctx, season)
+		}, want: "GET " + seasonBase + "/jobs", response: `{"jobs":[]}`},
+		{group: "seasons", name: "RetrieveBulkJob", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveBulkJob(ctx, season, "job/1")
+		}, want: "GET " + seasonBase + "/jobs/job%2F1"},
 
 		// ---------- holders (12) ----------
 		{group: "holders", name: "ListCustomers", call: func(ctx context.Context, c *Client) (any, error) {
@@ -397,9 +411,9 @@ func TestSeason2aOperationsCoverTheSpec(t *testing.T) {
 	for _, tc := range newOperationCases() {
 		counts[tc.group]++
 	}
-	want := map[string]int{"seasons": 32, "holders": 12, "orders": 9, "eventSales": 14, "eventSeries": 5}
+	want := map[string]int{"seasons": 35, "holders": 12, "orders": 9, "eventSales": 14, "eventSeries": 5}
 	if !reflect.DeepEqual(counts, want) {
-		t.Fatalf("operation cases per group = %v, want %v (72 in all)", counts, want)
+		t.Fatalf("operation cases per group = %v, want %v (75 in all)", counts, want)
 	}
 }
 
@@ -604,4 +618,99 @@ func TestWebhookAcceptsSeasonPlatformEventNames(t *testing.T) {
 		`"series.created","series.dates_added","order.paid","order.refunded","order.cancelled",`+
 		`"customer.created","customer.email_changed","season.ticket.transfer_sent",`+
 		`"season.ticket.transferred","season.ticket.transfer_cancelled"]}`)
+}
+
+func TestWebhookAcceptsAllPublicEventNames(t *testing.T) {
+	names := make([]WebhookEventName, 0, len(supportedWebhookEvents))
+	for name := range supportedWebhookEvents {
+		names = append(names, name)
+	}
+	want := []string{
+		"seat.booked", "seat.released", "seat.blocked", "hold.expired",
+		"hold.created", "hold.extended", "event.created", "event.soldout",
+		"object.resale.listed", "object.resale.unlisted", "object.resale.sold", "customer.created",
+		"customer.email_changed", "order.paid", "order.refunded", "order.cancelled",
+		"season.ticket.transfer_sent", "season.ticket.transferred", "season.ticket.transfer_cancelled", "season.ticket.issued",
+		"season.ticket.voided", "season.structure.activated", "season.structure.closed", "season.structure.archived",
+		"season.plan.published", "season.plan.superseded", "season.sales.opened", "season.sales.paused",
+		"season.sales.ended", "season.hold.committed", "season.hold.released", "season.hold.expired",
+		"season.booking.confirmed", "season.booking.cancelled", "season.booking.emergency_requested", "season.occurrence.returned",
+		"season.occurrence.reclaimed", "season.renewal.offered", "season.renewal.intent_received", "season.renewal.renewed",
+		"season.renewal.declined", "season.renewal.lapsed", "season.renewal.released", "season.operation.partial_terminal",
+		"season.amendment.applied", "season.performance.added", "season.performance.removed", "season.performance.past",
+		"season.performance.postponed", "season.performance.cancelled", "season.performance.rescheduled", "season.bulk_action.completed",
+		"season.order.paid", "season.order.refunded", "series.created", "series.dates_added",
+	}
+	if len(names) != 56 || len(want) != 56 {
+		t.Fatalf("supported names = %d, listed = %d, want 56", len(names), len(want))
+	}
+	for _, name := range want {
+		if _, ok := supportedWebhookEvents[WebhookEventName(name)]; !ok {
+			t.Errorf("%s is not accepted", name)
+		}
+	}
+	added := []WebhookEventName{
+		WebhookEventSeasonPerformancePostponed, WebhookEventSeasonPerformanceCancelled,
+		WebhookEventSeasonPerformanceRescheduled, WebhookEventSeasonBulkActionCompleted,
+		WebhookEventSeasonOrderPaid, WebhookEventSeasonStructureActivated,
+	}
+	client, calls := newTestClient(t, []stub{{status: 201, body: `{"sub":{"id":"wh_1"},"secret":"whsec_once"}`}})
+	if _, err := client.Webhooks.Create(context.Background(), "https://hooks.example", added); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	assertJSONBody(t, call(t, calls, 0).body, `{"url":"https://hooks.example","events":[`+
+		`"season.performance.postponed","season.performance.cancelled","season.performance.rescheduled",`+
+		`"season.bulk_action.completed","season.order.paid","season.structure.activated"]}`)
+	if _, err := client.Webhooks.Create(context.Background(), "https://hooks.example",
+		[]WebhookEventName{"season.unknown"}); err == nil {
+		t.Fatal("Create accepted an unknown event name")
+	}
+}
+
+func TestSeasonRequestsSendPriceTypesSaleSettingsContactsAndDateCancels(t *testing.T) {
+	responses := make([]stub, 6)
+	for i := range responses {
+		responses[i] = stub{status: 200, body: `{}`}
+	}
+	client, calls := newTestClient(t, responses)
+	ctx := context.Background()
+	email, name, dryRun := "ana@example.com", "Ana Silva", false
+
+	_, _ = client.Seasons.ReplacePackagePrices(ctx, "sea_1", "plan_1", SeasonPackagePricesParams{
+		Prices: []SeasonPackagePrice{
+			{CategoryKey: "stalls", UnitPrice: 18000},
+			{CategoryKey: "stalls", PriceTypeKey: SeasonPriceTypeChild, UnitPrice: 9000},
+		},
+	})
+	_, _ = client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{
+		ExpectedRevision: 3, CheckoutMode: "seatlayer",
+		TransferCutoffHours: FieldValue(24), ReturnCutoffHours: FieldNull[int](),
+	})
+	_, _ = client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{ExpectedRevision: 4, Name: "Renamed"})
+	_, _ = client.Seasons.CreateHolderImport(ctx, "sea_1", SeasonHolderImportParams{
+		SuccessorPlanActivationID: "pa_1", DryRun: &dryRun,
+		Rows: []SeasonHolderImportRow{{
+			RowID: "r1", HolderRef: "h1", PriorPlanActivationID: "pa_0", PriorContractRef: "c1",
+			Labels: []string{"A-1"}, HolderEmail: &email, HolderName: &name,
+		}},
+	})
+	_, _ = client.Seasons.CreateAmendment(ctx, "sea_1", SeasonAmendmentParams{
+		EventKey: "ev_night_3", Kind: "cancel", Refund: "per_date", Reason: "Storm", IdempotencyKey: "night-3-storm",
+	})
+	_, _ = client.Seasons.CreateAmendment(ctx, "sea_1", SeasonAmendmentParams{EventKey: "ev_1", Kind: "postpone"})
+
+	assertJSONBody(t, call(t, calls, 0).body, `{"prices":[{"categoryKey":"stalls","unitPrice":18000},`+
+		`{"categoryKey":"stalls","priceTypeKey":"child","unitPrice":9000}]}`)
+	assertJSONBody(t, call(t, calls, 1).body,
+		`{"expectedRevision":3,"checkoutMode":"seatlayer","transferCutoffHours":24,"returnCutoffHours":null}`)
+	assertJSONBody(t, call(t, calls, 2).body, `{"expectedRevision":4,"name":"Renamed"}`)
+	assertJSONBody(t, call(t, calls, 3).body, `{"successorPlanActivationId":"pa_1","dryRun":false,"rows":[{"rowId":"r1",`+
+		`"holderRef":"h1","priorPlanActivationId":"pa_0","priorContractRef":"c1","labels":["A-1"],`+
+		`"holderEmail":"ana@example.com","holderName":"Ana Silva"}]}`)
+	assertJSONBody(t, call(t, calls, 4).body,
+		`{"eventKey":"ev_night_3","kind":"cancel","refund":"per_date","reason":"Storm"}`)
+	if key := call(t, calls, 4).header.Get("Idempotency-Key"); key != "night-3-storm" {
+		t.Fatalf("amendment Idempotency-Key = %q", key)
+	}
+	assertJSONBody(t, call(t, calls, 5).body, `{"eventKey":"ev_1","kind":"postpone"}`)
 }

@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-- Added the 32 remaining Season operations to `Client.Seasons` (80 in all):
+- Added the 35 remaining Season operations to `Client.Seasons` (83 in all):
   performances, package updates and prices, `Publish`, checkout tests,
   occurrence inventory returns and reclaims, the holder list, Season order
   refunds, cancellations and resends, hosted renewals and contacts, renewal
-  notices, sales and seat reports, seat counts, and two CSV exports.
+  notices, sales and seat reports, seat counts, two CSV exports, and bulk
+  refunds with their jobs.
 - Added `Client.Holders` (holders, their tickets and transfers, and
   `ListCustomers`), `Client.Orders` (organization and event orders, refunds,
   cancellations, resends and the event orders CSV export) and
@@ -18,13 +19,27 @@
   discount codes.
 - CSV exports return the CSV text unchanged as a `string`. 204 deletes
   (`Seasons.DeletePlan`, `Events.DeleteDiscountCode`) return only an error.
-- 23 of the new mutations use exact header replay, bringing the total to 37.
+- 24 of the new mutations use exact header replay, bringing the total to 38.
   Domain-exact and unsupported operations stay single-attempt.
 - Added ten `WebhookEvent…` constants: `series.created`,
   `series.dates_added`, `order.paid`, `order.refunded`, `order.cancelled`,
   `customer.created`, `customer.email_changed`,
   `season.ticket.transfer_sent`, `season.ticket.transferred` and
   `season.ticket.transfer_cancelled`.
+- Added `Seasons.RefundPerformance` (refund every order of a cancelled date as
+  a job, with header replay; `SeasonPerformanceRefundParams`),
+  `Seasons.ListBulkJobs`, and `Seasons.RetrieveBulkJob`.
+- `SeasonPackagePrice` takes `PriceTypeKey`, with the `SeasonPriceTypeAdult`,
+  `…Child`, `…Concession`, `…Senior` and `…Student` constants.
+- `SeasonAmendmentParams` takes `Refund` and `Reason`, for the new `postpone`
+  and `cancel` kinds.
+- `SeasonUpdateParams` takes `CheckoutMode`, `TransferCutoffHours` and
+  `ReturnCutoffHours`.
+- `SeasonHolderImportRow` takes `HolderEmail` and `HolderName`.
+- Webhook create and update accept all 56 public event names, with a
+  `WebhookEvent…` constant for each; they used to refuse every Season event
+  except the three ticket transfer ones.
+- `EventListParams` takes `SeriesKey` to list one event series' dates.
 
 ## 0.8.0 (2026-09-10)
 

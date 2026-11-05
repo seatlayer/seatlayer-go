@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-func TestSeasonsMapAll80OperationsAndReplayClasses(t *testing.T) {
-	const seasonOperations = 80
+func TestSeasonsMapAll83OperationsAndReplayClasses(t *testing.T) {
+	const seasonOperations = 83
 	responses := make([]stub, seasonOperations)
 	for i := range responses {
 		responses[i] = stub{status: 200, body: `{}`}
@@ -65,7 +65,7 @@ func TestSeasonsMapAll80OperationsAndReplayClasses(t *testing.T) {
 	_, _ = client.Seasons.ListAudit(ctx, key)
 	_, _ = client.Seasons.ExportSupportSnapshot(ctx, key)
 
-	// The 32 operations added in Season platform slice 2a, from the shared table.
+	// The 35 operations added in Season platform slices 2a and 2.11, from the shared table.
 	var added []operationCase
 	for _, tc := range newOperationCases() {
 		if tc.group == "seasons" {

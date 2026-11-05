@@ -114,9 +114,11 @@ treated as a transient fault to back off through.
 
 ## Fixed Renewable Seasons
 
-`client.Seasons` exposes 80 trusted organizer operations: the 48 added in `v0.7.0`, plus
-performances, package prices, one-call publishing, checkout tests, the holder list, Season order
-refunds and cancellations, hosted renewals, sales and seat reports, and CSV exports.
+`client.Seasons` exposes 83 trusted organizer operations: the 48 added in `v0.7.0`, plus
+performances, package prices (per price type, with the `SeasonPriceType…` constants), one-call
+publishing, checkout tests, the holder list, Season order refunds and cancellations, hosted
+renewals, sales and seat reports, CSV exports, and the bulk refund of a cancelled date
+(`RefundPerformance`) with its jobs (`ListBulkJobs`, `RetrieveBulkJob`).
 `ExportHoldersCSV` and `ExportOrdersCSV` return the CSV text unchanged; `DeletePlan` answers
 `204` and returns only an error.
 
@@ -267,6 +269,8 @@ want that, and you can control it explicitly:
 client.Events.List(ctx, &seatlayer.EventListParams{Limit: 50, NoCounts: true})
 ```
 
+Set `SeriesKey` to list only the dates of one event series.
+
 ## Keeping a hold alive
 
 When an order takes longer than the checkout window (an invoice, a phone sale), extend rather than
@@ -309,7 +313,7 @@ feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mo
 
 Webhook methods expose the wire envelopes directly: `List` returns `WebhookList.Subs`, `Create`
 returns `WebhookCreateEnvelope` with the show-once `Secret`, and `Update` returns
-`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the eighteen accepted event names and
+`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the 56 accepted event names and
 `WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
 
 Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes. In Go
@@ -385,7 +389,7 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Thirty-seven mutations use exact header replay:
+`Retry-After` wins when the server sends it. Thirty-eight mutations use exact header replay:
 `Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
 `Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
 `Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.UpdatePlan`, `Seasons.DeletePlan`,
@@ -394,11 +398,11 @@ requests.
 `Seasons.CreatePerformances`, `Seasons.AttachPerformances`, `Seasons.DeletePerformance`,
 `Seasons.MarkPerformancePast`, `Seasons.CreateCheckoutTest`, `Seasons.ReplacePackagePrices`,
 `Seasons.AttachPlanPerformance`, `Seasons.DeletePlanPerformance`, `Seasons.RefundOrder`,
-`Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Holders.Update`, `Holders.CreateTransfer`,
-`Holders.CreateReturn`, `Orders.RefundEventOrder`, `Orders.CancelEventOrder`, `EventSeries.Create`,
-`EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
+`Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Seasons.RefundPerformance`, `Holders.Update`,
+`Holders.CreateTransfer`, `Holders.CreateReturn`, `Orders.RefundEventOrder`,
+`Orders.CancelEventOrder`, `EventSeries.Create`, `EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
 
-**Idempotency.** Those 37 replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those 38 replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
 have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
 includes inventory holds and bookings, show-once credential or secret creation, unsupported
@@ -452,7 +456,7 @@ return the CSV text as a `string`.
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |
 | `Workspaces` | `List` `Create` `Retrieve` `Update` |
 | `PerformanceGroups` | `List` `Create` `Retrieve` `Delete` `Activate` `Close` `RetrieveLifecycle` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `RetrieveHold` `BookHold` `RetrieveBooking` |
-| `Seasons` | 80 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals and hosted renewals, occurrence amendments and inventory returns, reports and CSV exports, audit, outbox, and support export |
+| `Seasons` | 83 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals and hosted renewals, occurrence amendments and inventory returns, bulk refunds and jobs, reports and CSV exports, audit, outbox, and support export |
 
 Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
 

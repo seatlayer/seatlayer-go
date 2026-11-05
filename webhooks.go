@@ -116,22 +116,72 @@ func webhookEventsOrNil(events []WebhookEventName) any {
 	return events
 }
 
+// supportedWebhookEvents is every public event name webhook create and update accept.
+var supportedWebhookEvents = map[WebhookEventName]struct{}{
+	WebhookEventSeatBooked:                      {},
+	WebhookEventSeatReleased:                    {},
+	WebhookEventSeatBlocked:                     {},
+	WebhookEventHoldExpired:                     {},
+	WebhookEventHoldCreated:                     {},
+	WebhookEventHoldExtended:                    {},
+	WebhookEventEventCreated:                    {},
+	WebhookEventEventSoldOut:                    {},
+	WebhookEventObjectResaleListed:              {},
+	WebhookEventObjectResaleUnlisted:            {},
+	WebhookEventObjectResaleSold:                {},
+	WebhookEventCustomerCreated:                 {},
+	WebhookEventCustomerEmailChanged:            {},
+	WebhookEventOrderPaid:                       {},
+	WebhookEventOrderRefunded:                   {},
+	WebhookEventOrderCancelled:                  {},
+	WebhookEventSeasonTicketTransferSent:        {},
+	WebhookEventSeasonTicketTransferred:         {},
+	WebhookEventSeasonTicketTransferCancelled:   {},
+	WebhookEventSeasonTicketIssued:              {},
+	WebhookEventSeasonTicketVoided:              {},
+	WebhookEventSeasonStructureActivated:        {},
+	WebhookEventSeasonStructureClosed:           {},
+	WebhookEventSeasonStructureArchived:         {},
+	WebhookEventSeasonPlanPublished:             {},
+	WebhookEventSeasonPlanSuperseded:            {},
+	WebhookEventSeasonSalesOpened:               {},
+	WebhookEventSeasonSalesPaused:               {},
+	WebhookEventSeasonSalesEnded:                {},
+	WebhookEventSeasonHoldCommitted:             {},
+	WebhookEventSeasonHoldReleased:              {},
+	WebhookEventSeasonHoldExpired:               {},
+	WebhookEventSeasonBookingConfirmed:          {},
+	WebhookEventSeasonBookingCancelled:          {},
+	WebhookEventSeasonBookingEmergencyRequested: {},
+	WebhookEventSeasonOccurrenceReturned:        {},
+	WebhookEventSeasonOccurrenceReclaimed:       {},
+	WebhookEventSeasonRenewalOffered:            {},
+	WebhookEventSeasonRenewalIntentReceived:     {},
+	WebhookEventSeasonRenewalRenewed:            {},
+	WebhookEventSeasonRenewalDeclined:           {},
+	WebhookEventSeasonRenewalLapsed:             {},
+	WebhookEventSeasonRenewalReleased:           {},
+	WebhookEventSeasonOperationPartialTerminal:  {},
+	WebhookEventSeasonAmendmentApplied:          {},
+	WebhookEventSeasonPerformanceAdded:          {},
+	WebhookEventSeasonPerformanceRemoved:        {},
+	WebhookEventSeasonPerformancePast:           {},
+	WebhookEventSeasonPerformancePostponed:      {},
+	WebhookEventSeasonPerformanceCancelled:      {},
+	WebhookEventSeasonPerformanceRescheduled:    {},
+	WebhookEventSeasonBulkActionCompleted:       {},
+	WebhookEventSeasonOrderPaid:                 {},
+	WebhookEventSeasonOrderRefunded:             {},
+	WebhookEventSeriesCreated:                   {},
+	WebhookEventSeriesDatesAdded:                {},
+}
+
 func validateWebhookEvents(events []WebhookEventName) error {
 	if len(events) == 0 {
 		return errors.New("seatlayer: events must contain supported webhook event names")
 	}
 	for _, event := range events {
-		switch event {
-		case WebhookEventSeatBooked, WebhookEventSeatReleased, WebhookEventSeatBlocked,
-			WebhookEventHoldExpired, WebhookEventHoldCreated, WebhookEventHoldExtended,
-			WebhookEventEventCreated, WebhookEventEventSoldOut,
-			WebhookEventSeriesCreated, WebhookEventSeriesDatesAdded,
-			WebhookEventOrderPaid, WebhookEventOrderRefunded, WebhookEventOrderCancelled,
-			WebhookEventCustomerCreated, WebhookEventCustomerEmailChanged,
-			WebhookEventSeasonTicketTransferSent, WebhookEventSeasonTicketTransferred,
-			WebhookEventSeasonTicketTransferCancelled:
-			continue
-		default:
+		if _, ok := supportedWebhookEvents[event]; !ok {
 			return errors.New("seatlayer: events must contain supported webhook event names")
 		}
 	}

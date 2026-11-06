@@ -956,3 +956,25 @@ func TestReleaseLapsedOffersKeepsOneKeyAcrossRetry(t *testing.T) {
 		}
 	}
 }
+
+// Renewal notices for one offer batch send its batchId and no offer ids.
+func TestRenewalNoticesForOneOfferBatchSendTheBatchID(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 200, body: `{"scheduled":240,"withoutEmail":3}`}})
+
+	got, err := client.Seasons.CreateRenewalNotices(context.Background(), "sea/a",
+		&SeasonRenewalNoticesParams{BatchID: "srb/1"})
+	if err != nil {
+		t.Fatalf("CreateRenewalNotices: %v", err)
+	}
+	if got["scheduled"] != float64(240) {
+		t.Fatalf("scheduled = %v, want 240", got["scheduled"])
+	}
+	sent := call(t, calls, 0)
+	if line := requestLine(sent); line != "POST /v1/seasons/sea%2Fa/renewal-notices" {
+		t.Fatalf("request = %q", line)
+	}
+	assertJSONBody(t, sent.body, `{"batchId":"srb/1"}`)
+	if key := sent.header.Get("Idempotency-Key"); key != "" {
+		t.Fatalf("Idempotency-Key = %q, want none", key)
+	}
+}

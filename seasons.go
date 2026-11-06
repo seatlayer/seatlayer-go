@@ -687,6 +687,8 @@ type SeasonRenewalContactParams struct {
 // 20,000. Empty OfferIDs leaves the field out.
 type SeasonRenewalNoticesParams struct {
 	OfferIDs []string
+	// BatchID, instead of OfferIDs, emails every open offer one CreateRenewalOffers batch made (its batchId).
+	BatchID string
 }
 
 // SeasonOfferPageParams pages renewal offers, newest first. Cursor is the
@@ -1053,7 +1055,7 @@ func (s *SeasonsService) CreateRenewalNotices(
 ) (map[string]any, error) {
 	var body any
 	if p != nil {
-		body = params("offerIds", seasonSliceOrNil(p.OfferIDs))
+		body = params("offerIds", seasonSliceOrNil(p.OfferIDs), "batchId", stringOrNil(p.BatchID))
 	}
 	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-notices"), body, "")
 }

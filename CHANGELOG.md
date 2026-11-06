@@ -59,6 +59,7 @@
 - `Seasons.CreateRenewalOffers` answers `201 {"offers": [...]}` for 100 contracts or fewer, and `202 {"job": ..., "batchId": ...}` above that: a `renewal_run` job makes the offers. Follow it with `RetrieveBulkJob`, then read the offers with `ListRenewalOffers`. It can refuse with `409 job_mismatch` or `503 season_not_configured`.
 - `Seasons.CreateHolderImportFromSeason` answers `202 {"job": ...}` when a commit brings across more than 100 holders: a `holder_import` job, whose `summary` in `RetrieveBulkJob` has the same counts when it completes. It can refuse with `409 job_mismatch`, or `503 job_busy` or `season_not_configured`.
 - `Seasons.CreateRenewalNotices` takes up to 20,000 offer ids; more answers `422 too_many_offer_ids`.
+- `SeasonRenewalNoticesParams` takes `BatchID` instead of `OfferIDs`: `CreateRenewalNotices` emails every open offer one `CreateRenewalOffers` batch made, such as the batch a `renewal_run` job made.
 
 ## 0.8.0 (2026-09-10)
 

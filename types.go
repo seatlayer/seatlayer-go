@@ -93,6 +93,20 @@ func (p BuyerAccessSessionNullableFields) apply(body map[string]any) {
 	}
 }
 
+// nullableFields adds each field that was set, including explicit nulls.
+func nullableFields(body map[string]any, fields ...struct {
+	key     string
+	value   any
+	present bool
+}) map[string]any {
+	for _, field := range fields {
+		if field.present {
+			body[field.key] = field.value
+		}
+	}
+	return body
+}
+
 func fieldRequestValue[T any](key string, field NullableField[T]) struct {
 	key     string
 	value   any
@@ -112,15 +126,64 @@ type WebhookEventName string
 // WebhookDeliveryStatus filters webhook delivery attempts.
 type WebhookDeliveryStatus string
 
+// The 56 public webhook event names, in the order the API lists them.
 const (
-	WebhookEventSeatBooked   WebhookEventName = "seat.booked"
-	WebhookEventSeatReleased WebhookEventName = "seat.released"
-	WebhookEventSeatBlocked  WebhookEventName = "seat.blocked"
-	WebhookEventHoldExpired  WebhookEventName = "hold.expired"
-	WebhookEventHoldCreated  WebhookEventName = "hold.created"
-	WebhookEventHoldExtended WebhookEventName = "hold.extended"
-	WebhookEventEventCreated WebhookEventName = "event.created"
-	WebhookEventEventSoldOut WebhookEventName = "event.soldout"
+	WebhookEventSeatBooked                      WebhookEventName = "seat.booked"
+	WebhookEventSeatReleased                    WebhookEventName = "seat.released"
+	WebhookEventSeatBlocked                     WebhookEventName = "seat.blocked"
+	WebhookEventHoldExpired                     WebhookEventName = "hold.expired"
+	WebhookEventHoldCreated                     WebhookEventName = "hold.created"
+	WebhookEventHoldExtended                    WebhookEventName = "hold.extended"
+	WebhookEventEventCreated                    WebhookEventName = "event.created"
+	WebhookEventEventSoldOut                    WebhookEventName = "event.soldout"
+	WebhookEventObjectResaleListed              WebhookEventName = "object.resale.listed"
+	WebhookEventObjectResaleUnlisted            WebhookEventName = "object.resale.unlisted"
+	WebhookEventObjectResaleSold                WebhookEventName = "object.resale.sold"
+	WebhookEventCustomerCreated                 WebhookEventName = "customer.created"
+	WebhookEventCustomerEmailChanged            WebhookEventName = "customer.email_changed"
+	WebhookEventOrderPaid                       WebhookEventName = "order.paid"
+	WebhookEventOrderRefunded                   WebhookEventName = "order.refunded"
+	WebhookEventOrderCancelled                  WebhookEventName = "order.cancelled"
+	WebhookEventSeasonTicketTransferSent        WebhookEventName = "season.ticket.transfer_sent"
+	WebhookEventSeasonTicketTransferred         WebhookEventName = "season.ticket.transferred"
+	WebhookEventSeasonTicketTransferCancelled   WebhookEventName = "season.ticket.transfer_cancelled"
+	WebhookEventSeasonTicketIssued              WebhookEventName = "season.ticket.issued"
+	WebhookEventSeasonTicketVoided              WebhookEventName = "season.ticket.voided"
+	WebhookEventSeasonStructureActivated        WebhookEventName = "season.structure.activated"
+	WebhookEventSeasonStructureClosed           WebhookEventName = "season.structure.closed"
+	WebhookEventSeasonStructureArchived         WebhookEventName = "season.structure.archived"
+	WebhookEventSeasonPlanPublished             WebhookEventName = "season.plan.published"
+	WebhookEventSeasonPlanSuperseded            WebhookEventName = "season.plan.superseded"
+	WebhookEventSeasonSalesOpened               WebhookEventName = "season.sales.opened"
+	WebhookEventSeasonSalesPaused               WebhookEventName = "season.sales.paused"
+	WebhookEventSeasonSalesEnded                WebhookEventName = "season.sales.ended"
+	WebhookEventSeasonHoldCommitted             WebhookEventName = "season.hold.committed"
+	WebhookEventSeasonHoldReleased              WebhookEventName = "season.hold.released"
+	WebhookEventSeasonHoldExpired               WebhookEventName = "season.hold.expired"
+	WebhookEventSeasonBookingConfirmed          WebhookEventName = "season.booking.confirmed"
+	WebhookEventSeasonBookingCancelled          WebhookEventName = "season.booking.cancelled"
+	WebhookEventSeasonBookingEmergencyRequested WebhookEventName = "season.booking.emergency_requested"
+	WebhookEventSeasonOccurrenceReturned        WebhookEventName = "season.occurrence.returned"
+	WebhookEventSeasonOccurrenceReclaimed       WebhookEventName = "season.occurrence.reclaimed"
+	WebhookEventSeasonRenewalOffered            WebhookEventName = "season.renewal.offered"
+	WebhookEventSeasonRenewalIntentReceived     WebhookEventName = "season.renewal.intent_received"
+	WebhookEventSeasonRenewalRenewed            WebhookEventName = "season.renewal.renewed"
+	WebhookEventSeasonRenewalDeclined           WebhookEventName = "season.renewal.declined"
+	WebhookEventSeasonRenewalLapsed             WebhookEventName = "season.renewal.lapsed"
+	WebhookEventSeasonRenewalReleased           WebhookEventName = "season.renewal.released"
+	WebhookEventSeasonOperationPartialTerminal  WebhookEventName = "season.operation.partial_terminal"
+	WebhookEventSeasonAmendmentApplied          WebhookEventName = "season.amendment.applied"
+	WebhookEventSeasonPerformanceAdded          WebhookEventName = "season.performance.added"
+	WebhookEventSeasonPerformanceRemoved        WebhookEventName = "season.performance.removed"
+	WebhookEventSeasonPerformancePast           WebhookEventName = "season.performance.past"
+	WebhookEventSeasonPerformancePostponed      WebhookEventName = "season.performance.postponed"
+	WebhookEventSeasonPerformanceCancelled      WebhookEventName = "season.performance.cancelled"
+	WebhookEventSeasonPerformanceRescheduled    WebhookEventName = "season.performance.rescheduled"
+	WebhookEventSeasonBulkActionCompleted       WebhookEventName = "season.bulk_action.completed"
+	WebhookEventSeasonOrderPaid                 WebhookEventName = "season.order.paid"
+	WebhookEventSeasonOrderRefunded             WebhookEventName = "season.order.refunded"
+	WebhookEventSeriesCreated                   WebhookEventName = "series.created"
+	WebhookEventSeriesDatesAdded                WebhookEventName = "series.dates_added"
 )
 
 const (

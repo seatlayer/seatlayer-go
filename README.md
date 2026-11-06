@@ -114,7 +114,17 @@ treated as a transient fault to back off through.
 
 ## Fixed Renewable Seasons
 
-Since `v0.7.0`, `client.Seasons` exposes all 48 trusted organizer operations.
+`client.Seasons` exposes 87 trusted organizer operations: the 48 added in `v0.7.0`, plus
+performances, package prices (per price type, with the `SeasonPriceType…` constants), one-call
+publishing, checkout tests, the holder list, Season order refunds and cancellations, hosted
+renewals, renewal quotes, intents and checkouts, sales and seat reports, CSV exports, and the bulk refund of a cancelled date
+(`RefundPerformance`) and release of lapsed offers (`ReleaseLapsedOffers`) with their jobs
+(`ListBulkJobs`, `RetrieveBulkJob`). Above 100 contracts `CreateRenewalOffers` answers `202` with a
+`renewal_run` job and its `batchId`, and above 100 holders `CreateHolderImportFromSeason` answers
+`202` with a `holder_import` job; follow either with `RetrieveBulkJob`. `ListRenewalOffers` and
+`RetrieveHostedRenewals` read one page at a time: pass `SeasonOfferPageParams{Cursor: nextCursor}`.
+`ExportHoldersCSV` and `ExportOrdersCSV` return the CSV text unchanged; `DeletePlan` answers
+`204` and returns only an error.
 
 After the test hold/book/cancel journey and matching webhook deliveries,
 `client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)` sends no evidence body;
@@ -137,6 +147,33 @@ Treat `202` as accepted work and poll `RetrieveLifecycle` with the returned
 operation identity. Buyer-session minting and domain-exact booking,
 cancellation, and renewal actions remain single-attempt; only declared
 header-replay catalogue mutations retry automatically.
+
+When SeatLayer takes the Season's payments, renew a holder with no hosted page: read the price,
+start a checkout, and send the holder to `payment.url`. For a renewal taken by phone or at the box
+office, `CreateRenewalIntent` records the holder's intent before you commit the offer. A decline
+can carry the holder's reason.
+
+```go
+quote, err := client.Seasons.RetrieveRenewalQuote(ctx, seasonKey, offerID)
+if err != nil {
+    return err
+}
+if quote["problem"] == nil {
+    started, err := client.Seasons.CreateRenewalCheckout(ctx, seasonKey, offerID,
+        seatlayer.SeasonRenewalCheckoutParams{
+            ReturnURL:      "https://tickets.yourclub.example/renewed",
+            IdempotencyKey: "renew-" + offerID,
+        })
+    if err != nil {
+        return err
+    }
+    redirect(started["payment"].(map[string]any)["url"].(string))
+}
+
+// For one holder's offer:
+_, err = client.Holders.DeclineRenewalOffer(ctx, "holder_123", offerID,
+    &seatlayer.SeasonRenewalDeclineParams{Reason: "Moving away"})
+```
 
 ## Test vs live
 
@@ -263,6 +300,8 @@ want that, and you can control it explicitly:
 client.Events.List(ctx, &seatlayer.EventListParams{Limit: 50, NoCounts: true})
 ```
 
+Set `SeriesKey` to list only the dates of one event series.
+
 ## Keeping a hold alive
 
 When an order takes longer than the checkout window (an invoice, a phone sale), extend rather than
@@ -305,7 +344,7 @@ feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mo
 
 Webhook methods expose the wire envelopes directly: `List` returns `WebhookList.Subs`, `Create`
 returns `WebhookCreateEnvelope` with the show-once `Secret`, and `Update` returns
-`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the eight accepted event names and
+`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the 56 accepted event names and
 `WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
 
 Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes. In Go
@@ -381,13 +420,21 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Fourteen mutations use exact header replay:
+`Retry-After` wins when the server sends it. Forty-one mutations use exact header replay:
 `Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
 `Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
-`Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.DuplicateToLive`, `Seasons.CreateHolderImport`,
-`Seasons.CreateRenewalOffers`, and `Seasons.CreateAmendment`. Other 4xx responses are never retried.
+`Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.UpdatePlan`, `Seasons.DeletePlan`,
+`Seasons.Publish`, `Seasons.DuplicateToLive`, `Seasons.CreateHolderImport`,
+`Seasons.CreateHolderImportFromSeason`, `Seasons.CreateRenewalOffers`, `Seasons.CreateAmendment`,
+`Seasons.CreatePerformances`, `Seasons.AttachPerformances`, `Seasons.DeletePerformance`,
+`Seasons.MarkPerformancePast`, `Seasons.CreateCheckoutTest`, `Seasons.ReplacePackagePrices`,
+`Seasons.AttachPlanPerformance`, `Seasons.DeletePlanPerformance`, `Seasons.RefundOrder`,
+`Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Seasons.RefundPerformance`,
+`Seasons.ReleaseLapsedOffers`, `Seasons.CreateRenewalCheckout`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
+`Holders.CreateRenewalCheckout`, `Orders.RefundEventOrder`,
+`Orders.CancelEventOrder`, `EventSeries.Create`, `EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
 
-**Idempotency.** Those 14 replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those 41 replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
 have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
 includes inventory holds and bookings, show-once credential or secret creation, unsupported
@@ -423,20 +470,25 @@ client.Do(ctx, http.MethodPost, "/v1/events/ev_1/some-new-route", nil, map[strin
 
 The client exposes these services. Performance Groups cover runs, sessions, holds, and bookings;
 Seasons cover catalogue, plan, sales, buyer-session, booking, renewal, occurrence, reporting,
-outbox, and support operations.
+outbox, and support operations. Event sales settings (checkout choice, payment gateway, sales
+readiness and transitions, booking fee, discount codes) live on `Events`. The three CSV exports
+return the CSV text as a `string`.
 
 | Service | Methods |
 | --- | --- |
 | `Charts` | `List` `All` `Create` `Retrieve` `Update` `Delete` `Copy` `Archive` `Unarchive` `Publish` |
 | `Templates` | `InstantiateTemplate` |
-| `Events` | `List` `All` `Create` `Retrieve` `RetrieveConfigurationBinding` `UpdateConfigurationBinding` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `ListTicketReleases` `UpdateTicketReleases` `CloseTicketRelease` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` |
+| `Events` | `List` `All` `Create` `Retrieve` `RetrieveConfigurationBinding` `UpdateConfigurationBinding` `Update` `Delete` `UpdatePoster` `DeletePoster` `UpdateChart` `Close` `Reopen` `Archive` `ListTicketReleases` `UpdateTicketReleases` `CloseTicketRelease` `RetrieveHoldTTL` `UpdateHoldTTL` `RetrieveReport` `RetrieveLog` `RetrieveBuyerCheckout` `ReplaceBuyerCheckout` `RetrievePaymentGateway` `ReplacePaymentGateway` `RetrieveSalesReadiness` `PreflightSales` `TransitionSales` `RetrieveBookingFee` `ReplaceBookingFee` `ListDiscountCodes` `CreateDiscountCode` `UpdateDiscountCode` `EndDiscountCode` `DeleteDiscountCode` |
+| `EventSeries` | `Create` `List` `Retrieve` `AddDates` `Update` |
+| `Orders` | `List` `Retrieve` `ListTickets` `ListEventOrders` `RetrieveEventOrder` `ExportEventOrdersCSV` `RefundEventOrder` `CancelEventOrder` `ResendEventOrderTickets` |
+| `Holders` | `ListCustomers` `Retrieve` `Update` `RevokeSessions` `ListSeasons` `ListTickets` `RetrieveTicket` `CreateTransfer` `ListTransfers` `CancelTransfer` `AcceptTransfer` `CreateReturn` `CreateRenewalCheckout` `DeclineRenewalOffer` |
 | `Channels` | `ListChannels` `CreateChannel` `UpdateChannel` `UpdateAssignments` `ListAllocation` `RetrieveAccessPreview` `RetrieveReport` `Pause` `Unpause` `Archive` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `CreateAccessLink` `ListAccessLinks` `RotateAccessLink` `RevokeAccessLink` |
 | `Inventory` | `Hold` `HoldBestAvailable` `BookBestAvailable` `ExtendHold` `RetrieveHold` `Release` `Book` `BoxOfficeBook` `Unbook` `Block` `Unblock` `UnblockAll` `RetrieveAvailability` `UpdateAvailability` `ListBookings` `RetrieveBooking` |
 | `Sessions` | `CreateManageSession` `RevokeManageSession` `CreateDesignerSession` `RevokeDesignerSession` |
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |
 | `Workspaces` | `List` `Create` `Retrieve` `Update` |
 | `PerformanceGroups` | `List` `Create` `Retrieve` `Delete` `Activate` `Close` `RetrieveLifecycle` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `RetrieveHold` `BookHold` `RetrieveBooking` |
-| `Seasons` | 48 operations for catalogue and Plan lifecycle, sales windows, buyer access and booking, holder imports, renewals, occurrence amendments, reports, audit, outbox, and support export |
+| `Seasons` | 87 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds, lapsed-offer releases and their jobs, reports and CSV exports, audit, outbox, and support export |
 
 Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
 

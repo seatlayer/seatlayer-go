@@ -72,7 +72,10 @@ type Client struct {
 	Charts            *ChartsService
 	Channels          *ChannelsService
 	Events            *EventsService
+	EventSeries       *EventSeriesService
+	Holders           *HoldersService
 	Inventory         *InventoryService
+	Orders            *OrdersService
 	PerformanceGroups *PerformanceGroupsService
 	Seasons           *SeasonsService
 	Sessions          *SessionsService
@@ -151,7 +154,10 @@ func New(secretKey string, options ...Option) (*Client, error) {
 	client.Charts = &ChartsService{client: client}
 	client.Channels = &ChannelsService{client: client}
 	client.Events = &EventsService{client: client}
+	client.EventSeries = &EventSeriesService{client: client}
+	client.Holders = &HoldersService{client: client}
 	client.Inventory = &InventoryService{client: client}
+	client.Orders = &OrdersService{client: client}
 	client.PerformanceGroups = &PerformanceGroupsService{client: client}
 	client.Seasons = &SeasonsService{client: client}
 	client.Sessions = &SessionsService{client: client}
@@ -193,6 +199,45 @@ func (c *Client) do(
 	idempotencyKey string,
 	headerReplay bool,
 ) (map[string]any, error) {
+	responseBody, status, err := c.send(
+		ctx, method, path, query, body, idempotencyKey, headerReplay, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNoContent || len(responseBody) == 0 {
+		return map[string]any{}, nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		return nil, fmt.Errorf("seatlayer: decoding response: %w", err)
+	}
+	return decoded, nil
+}
+
+// getText reads a route that answers with text rather than JSON, such as a
+// CSV export, and returns the body unchanged. Errors still arrive as JSON and
+// map to the usual error types.
+func (c *Client) getText(
+	ctx context.Context, path string, query url.Values, accept string,
+) (string, error) {
+	responseBody, _, err := c.send(ctx, http.MethodGet, path, query, nil, "", false, accept)
+	if err != nil {
+		return "", err
+	}
+	return string(responseBody), nil
+}
+
+// send runs one logical request with its retry policy and returns the raw
+// success body and status. Callers decide how to read the body.
+func (c *Client) send(
+	ctx context.Context,
+	method, path string,
+	query url.Values,
+	body any,
+	idempotencyKey string,
+	headerReplay bool,
+	accept string,
+) ([]byte, int, error) {
 	endpoint := c.baseURL + path
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
@@ -210,7 +255,7 @@ func (c *Client) do(
 		} else {
 			encoded, err := json.Marshal(body)
 			if err != nil {
-				return nil, fmt.Errorf("seatlayer: encoding request body: %w", err)
+				return nil, 0, fmt.Errorf("seatlayer: encoding request body: %w", err)
 			}
 			payload = encoded
 		}
@@ -218,7 +263,7 @@ func (c *Client) do(
 
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.secretKey)
-	header.Set("Accept", "application/json")
+	header.Set("Accept", accept)
 	header.Set("User-Agent", userAgent)
 	if payload != nil {
 		header.Set("Content-Type", contentType)
@@ -233,7 +278,7 @@ func (c *Client) do(
 			key = newIdempotencyKey()
 		}
 		if key != "" && !idempotencyKeyPattern.MatchString(key) {
-			return nil, fmt.Errorf(
+			return nil, 0, fmt.Errorf(
 				"seatlayer: invalid Idempotency-Key %q: allowed characters are A-Z a-z 0-9 . _ : - and the length must be 1-128",
 				key)
 		}
@@ -252,7 +297,7 @@ func (c *Client) do(
 
 		request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 		if err != nil {
-			return nil, fmt.Errorf("seatlayer: building request: %w", err)
+			return nil, 0, fmt.Errorf("seatlayer: building request: %w", err)
 		}
 		request.Header = header.Clone()
 
@@ -260,16 +305,16 @@ func (c *Client) do(
 		if err != nil {
 			// A cancelled context is the caller's decision, not a transient fault.
 			if ctx.Err() != nil {
-				return nil, &ConnectionError{Op: method + " " + path, Err: ctx.Err()}
+				return nil, 0, &ConnectionError{Op: method + " " + path, Err: ctx.Err()}
 			}
 			lastErr = &ConnectionError{Op: method + " " + path, Err: err}
 			if retryAllowed && attempt < c.maxRetries-1 {
 				if err := sleepCtx(ctx, backoff(attempt, -1)); err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				continue
 			}
-			return nil, lastErr
+			return nil, 0, lastErr
 		}
 
 		responseBody, readErr := io.ReadAll(response.Body)
@@ -278,22 +323,15 @@ func (c *Client) do(
 			lastErr = &ConnectionError{Op: method + " " + path, Err: readErr}
 			if retryAllowed && attempt < c.maxRetries-1 {
 				if err := sleepCtx(ctx, backoff(attempt, -1)); err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				continue
 			}
-			return nil, lastErr
+			return nil, 0, lastErr
 		}
 
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
-			if response.StatusCode == http.StatusNoContent || len(responseBody) == 0 {
-				return map[string]any{}, nil
-			}
-			var decoded map[string]any
-			if err := json.Unmarshal(responseBody, &decoded); err != nil {
-				return nil, fmt.Errorf("seatlayer: decoding response: %w", err)
-			}
-			return decoded, nil
+			return responseBody, response.StatusCode, nil
 		}
 
 		// A proxy or WAF can answer with HTML; that must not become a decode
@@ -309,19 +347,19 @@ func (c *Client) do(
 				wait = time.Duration(retryAfter * float64(time.Second))
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			continue
 		}
 
-		return nil, errorFromResponse(
+		return nil, 0, errorFromResponse(
 			response.StatusCode, errorBody, response.Header.Get("X-Request-ID"), retryAfter)
 	}
 
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, 0, lastErr
 	}
-	return nil, &ConnectionError{Op: method + " " + path, Err: errors.New("no attempts made")}
+	return nil, 0, &ConnectionError{Op: method + " " + path, Err: errors.New("no attempts made")}
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values) (map[string]any, error) {
@@ -460,6 +498,15 @@ func boolOrNil(value bool) any {
 		return nil
 	}
 	return value
+}
+
+// pointerOrNil sends an optional pointer field only when it is set, so an
+// explicit false or zero still reaches the API.
+func pointerOrNil[T any](value *T) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 // decodeResponse projects the transport's forward-compatible JSON object into

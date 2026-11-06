@@ -978,3 +978,37 @@ func TestRenewalNoticesForOneOfferBatchSendTheBatchID(t *testing.T) {
 		t.Fatalf("Idempotency-Key = %q, want none", key)
 	}
 }
+
+// Single tickets reach the wire on create and update, an explicit false
+// included, and are left out when nil.
+func TestSeasonSingleTicketsReachTheWireOnCreateAndUpdate(t *testing.T) {
+	answer := stub{status: 200, body: `{"season":{"key":"sea_1","singleTickets":true},` +
+		`"singleTicketDates":{"direction":"open","opened":["ev_1"],"closed":[],"notOpened":[],"jobId":null}}`}
+	client, calls := newTestClient(t, []stub{answer, answer, answer})
+	ctx := context.Background()
+	on, off := true, false
+
+	if _, err := client.Seasons.Create(ctx, SeasonCreateParams{
+		Name: "Series", EventKeys: []string{"ev_1", "ev_2"}, SingleTickets: &on,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	updated, err := client.Seasons.Update(ctx, "sea/a", SeasonUpdateParams{ExpectedRevision: 5, SingleTickets: &off})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if _, err := client.Seasons.Update(ctx, "sea/a", SeasonUpdateParams{ExpectedRevision: 6, Name: "Series 2"}); err != nil {
+		t.Fatalf("Update without single tickets: %v", err)
+	}
+
+	assertJSONBody(t, call(t, calls, 0).body, `{"name":"Series","eventKeys":["ev_1","ev_2"],"singleTickets":true}`)
+	assertJSONBody(t, call(t, calls, 1).body, `{"expectedRevision":5,"singleTickets":false}`)
+	assertJSONBody(t, call(t, calls, 2).body, `{"expectedRevision":6,"name":"Series 2"}`)
+	if got := requestLine(call(t, calls, 1)); got != "PATCH /v1/seasons/sea%2Fa" {
+		t.Fatalf("update request = %q", got)
+	}
+	dates, ok := updated["singleTicketDates"].(map[string]any)
+	if !ok || dates["direction"] != "open" {
+		t.Fatalf("singleTicketDates = %v, want the dates it opened", updated["singleTicketDates"])
+	}
+}

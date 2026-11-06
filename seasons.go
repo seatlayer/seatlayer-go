@@ -51,7 +51,10 @@ type SeasonCreateParams struct {
 	Edition                    NullableField[string]
 	EventKeys                  []string
 	SourcePerformanceGroupKeys []string
-	IdempotencyKey             string
+	// SingleTickets makes each date also sell its own single tickets once the
+	// Season is on sale. Nil leaves it out: Season only, the default.
+	SingleTickets  *bool
+	IdempotencyKey string
 }
 
 type SeasonUpdateParams struct {
@@ -71,7 +74,11 @@ type SeasonUpdateParams struct {
 	// Audience is "embed_only" or "public" (listed on your SeatLayer website;
 	// an ended Season cannot become public, 409 sales_ended). Empty leaves it
 	// unchanged.
-	Audience       string
+	Audience string
+	// SingleTickets turned on while the Season is on sale opens each upcoming
+	// date's own sales through its readiness checks; turned off, they stop. The
+	// answer's singleTicketDates says which. Nil leaves it unchanged.
+	SingleTickets  *bool
 	IdempotencyKey string
 }
 
@@ -177,6 +184,9 @@ func (s *SeasonsService) Create(ctx context.Context, p SeasonCreateParams) (map[
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
 	}
+	if p.SingleTickets != nil {
+		body["singleTickets"] = *p.SingleTickets
+	}
 	return s.client.postHeaderReplay(ctx, "/v1/seasons", body, p.IdempotencyKey)
 }
 
@@ -194,7 +204,8 @@ func (s *SeasonsService) Update(
 	ctx context.Context, seasonKey string, p SeasonUpdateParams,
 ) (map[string]any, error) {
 	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name),
-		"checkoutMode", stringOrNil(p.CheckoutMode), "audience", stringOrNil(p.Audience))
+		"checkoutMode", stringOrNil(p.CheckoutMode), "audience", stringOrNil(p.Audience),
+		"singleTickets", pointerOrNil(p.SingleTickets))
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
 	}

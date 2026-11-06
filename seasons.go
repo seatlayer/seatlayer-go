@@ -521,6 +521,8 @@ func (s *SeasonsService) ListOccurrences(ctx context.Context, seasonKey string) 
 // "cancel" also voids every live ticket for the date as a date_cancel_void job,
 // SeasonDateCancelVoidJobID(amendmentId), which the answer does not name;
 // follow it with RetrieveBulkJob. With a Refund, refundJob names the refund job.
+// A cancelled date can't be moved (reschedule), postponed or replaced:
+// 409 performance_cancelled.
 func (s *SeasonsService) CreateAmendment(
 	ctx context.Context, seasonKey string, p SeasonAmendmentParams,
 ) (map[string]any, error) {
@@ -955,6 +957,7 @@ func (s *SeasonsService) DeletePlanPerformance(
 }
 
 // MarkPerformancePast marks a performance past so it stops blocking new Season sales.
+// A cancelled date answers 409 performance_cancelled.
 func (s *SeasonsService) MarkPerformancePast(
 	ctx context.Context, seasonKey, eventKey string, p SeasonMarkPastParams,
 ) (map[string]any, error) {

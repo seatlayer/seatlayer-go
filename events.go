@@ -233,7 +233,8 @@ func (s *EventsService) Close(ctx context.Context, eventKey string) (map[string]
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/close", nil, "")
 }
 
-// Reopen resumes buyer sales.
+// Reopen resumes buyer sales. A date its season cancelled never opens again:
+// 409 season_date_cancelled.
 func (s *EventsService) Reopen(ctx context.Context, eventKey string) (map[string]any, error) {
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/reopen", nil, "")
 }

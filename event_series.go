@@ -108,7 +108,10 @@ func (p EventSeriesPrices) requestValue() map[string]any {
 type EventSeriesUpdateParams struct {
 	Name   string
 	Prices *EventSeriesPrices
-	// Sales is "on" or "off".
+	// Sales is "on" or "off". "on" never opens a date its season cancelled:
+	// that date is a failed item of the job (season_date_cancelled), counted
+	// in job.failed but not in failedDates, which are the dates that could
+	// not be made.
 	Sales          string
 	IdempotencyKey string
 }

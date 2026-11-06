@@ -126,7 +126,9 @@ func (s *EventsService) PreflightSales(
 }
 
 // TransitionSales moves an event's sales to testable, live, paused or ended. It
-// is a compare-and-set on ExpectedRevision and is single-attempt.
+// is a compare-and-set on ExpectedRevision and is single-attempt. A date its
+// season cancelled never opens again: moving it to testable or live answers
+// 409 season_date_cancelled.
 func (s *EventsService) TransitionSales(
 	ctx context.Context, eventKey string, p EventSalesTransitionParams,
 ) (map[string]any, error) {

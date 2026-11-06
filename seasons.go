@@ -66,10 +66,11 @@ type SeasonUpdateParams struct {
 	// a live booking exists.
 	CheckoutMode string
 	// TransferCutoffHours is how many hours (0 to 720) before a date starts its
-	// tickets stop being sent to others. FieldNull means until it starts.
+	// tickets stop being sent to others. FieldNull means the club default
+	// (Settings › Ticket site), or until it starts when the club has none.
 	TransferCutoffHours NullableField[int]
 	// ReturnCutoffHours is how many hours (0 to 720) before a date starts a
-	// holder can no longer give a seat back. FieldNull means until it starts.
+	// holder can no longer give a seat back. FieldNull means the club default.
 	ReturnCutoffHours NullableField[int]
 	// Audience is "embed_only" or "public" (listed on your SeatLayer website;
 	// an ended Season cannot become public, 409 sales_ended). Empty leaves it

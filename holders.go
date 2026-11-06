@@ -124,7 +124,9 @@ func (s *HoldersService) RetrieveTicket(
 	return s.client.get(ctx, "/v1/holders/"+escape(holderRef)+"/tickets/"+escape(ticketID), nil)
 }
 
-// CreateTransfer sends some of a holder's Season tickets to an email.
+// CreateTransfer sends some of a holder's Season tickets to an email. Turning
+// customer sends off in Settings › Ticket site doesn't stop your server;
+// cut-offs still apply.
 func (s *HoldersService) CreateTransfer(
 	ctx context.Context, holderRef string, p HolderTransferCreateParams,
 ) (map[string]any, error) {
@@ -158,6 +160,8 @@ func (s *HoldersService) AcceptTransfer(
 // CreateReturn gives back a holder's seat on one date, one per ticket. The
 // result is {"return": ...}; a repeat with the same key answers with the same
 // return.
+// Turning give-backs off in Settings › Ticket site doesn't stop your server;
+// cut-offs still apply.
 func (s *HoldersService) CreateReturn(
 	ctx context.Context, holderRef string, p HolderReturnCreateParams,
 ) (map[string]any, error) {

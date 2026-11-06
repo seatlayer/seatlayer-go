@@ -84,8 +84,10 @@ type EventSeriesPriceCategory struct {
 	Tiers []EventSeriesPriceTier
 }
 
-// EventSeriesPrices lists every category of the floor plan, as the event
-// pricing route takes them. New orders pay these.
+// EventSeriesPrices lists only the categories whose price changes (for a
+// tiered category, only the tiers sent), each as the event pricing route
+// takes it. Every price left out keeps each date's own value. New orders pay
+// these.
 type EventSeriesPrices struct {
 	Categories []EventSeriesPriceCategory
 }
@@ -156,7 +158,8 @@ func (s *EventSeriesService) AddDates(
 	return s.client.postHeaderReplay(ctx, "/v1/event-series/"+escape(eventKey)+"/dates", body, p.IdempotencyKey)
 }
 
-// Update changes the name, prices or sales of every upcoming date.
+// Update changes the name, prices or sales of every upcoming date. Send only
+// the prices that change: each date keeps its own price for the rest.
 func (s *EventSeriesService) Update(
 	ctx context.Context, eventKey string, p EventSeriesUpdateParams,
 ) (map[string]any, error) {

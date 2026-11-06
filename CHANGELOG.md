@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Cancelling a date voids its tickets as a `date_cancel_void` job, named by
+  `SeasonDateCancelVoidJobID(amendmentID)` (`sbj_void_…`); follow it with
+  `Seasons.RetrieveBulkJob`. `season.ticket.voided` says `date_cancelled` for
+  each Season ticket it voids.
+- A Season package holds 2 to 50 dates. `SeasonHolderImportRowsPerCall(dates)`
+  gives the most rows one `Seasons.CreateHolderImport` call takes (100 up to
+  20 dates, 43 at 50); a call with more answers `422 invalid_rows`, a
+  `*ValidationError` with `maxRows` in its `Body`.
+- `Seasons.Update` answers may carry `singleTicketDates.jobRefused`: why a
+  `season_singles` job could not start. The change stands, and sending
+  `SingleTickets` true again opens any date still not open. An `Update`
+  retried with its first `IdempotencyKey` and `ExpectedRevision` is not
+  applied twice.
+- An `EventSeries.Create` given up for its key answers `409 create_abandoned`
+  (a `*ConflictError`) with a message to send it again with a new idempotency
+  key.
 - Added the 39 remaining Season operations to `Client.Seasons` (87 in all):
   performances, package updates and prices, `Publish`, checkout tests,
   occurrence inventory returns and reclaims, the holder list, Season order

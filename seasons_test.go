@@ -2,9 +2,41 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 )
+
+// The void job of a cancelled date is named from the amendment, and a holder
+// import call is sized by its package's dates; a call over it is a typed 422.
+func TestSeasonDateCancelVoidJobIDAndHolderImportRowsPerCall(t *testing.T) {
+	if got := SeasonDateCancelVoidJobID("amd_1"); got != "sbj_void_amd_1" {
+		t.Fatalf("void job id = %q, want sbj_void_amd_1", got)
+	}
+	for _, tc := range []struct{ dates, rows int }{{1, 100}, {20, 100}, {21, 95}, {50, 43}, {0, 100}, {5000, 1}} {
+		if got := SeasonHolderImportRowsPerCall(tc.dates); got != tc.rows {
+			t.Errorf("rows per call at %d dates = %d, want %d", tc.dates, got, tc.rows)
+		}
+	}
+
+	client, calls := newTestClient(t, []stub{{status: 422, body: `{"error":"invalid_rows","code":"invalid_rows",` +
+		`"message":"At most 43 rows a call for this package.","maxRows":43}`}})
+	_, err := client.Seasons.CreateHolderImport(context.Background(), "sea_1",
+		SeasonHolderImportParams{SuccessorPlanActivationID: "spa_1", Rows: []SeasonHolderImportRow{}})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("want *ValidationError, got %T", err)
+	}
+	if validation.Code != "invalid_rows" {
+		t.Fatalf("code = %q, want invalid_rows", validation.Code)
+	}
+	if got := validation.Body["maxRows"]; got != float64(43) {
+		t.Fatalf("maxRows = %v, want 43", got)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(*calls))
+	}
+}
 
 func TestSeasonsMapAll87OperationsAndReplayClasses(t *testing.T) {
 	const seasonOperations = 87

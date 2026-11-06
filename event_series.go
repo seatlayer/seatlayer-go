@@ -111,7 +111,10 @@ type EventSeriesUpdateParams struct {
 	IdempotencyKey string
 }
 
-// Create plans an event series from a schedule, or makes it as a job.
+// Create plans an event series from a schedule, or makes it as a job. Retried
+// safely with one IdempotencyKey. A series from an event that never started
+// and was given up answers 409 create_abandoned (a *ConflictError) for that key
+// every time: send the request again with a new IdempotencyKey.
 func (s *EventSeriesService) Create(
 	ctx context.Context, p EventSeriesCreateParams,
 ) (map[string]any, error) {

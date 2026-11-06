@@ -157,6 +157,22 @@ type SeasonSupportLookupParams struct {
 	HolderRef  string
 }
 
+// SeasonDateCancelVoidJobID names the job voiding a cancelled date's tickets:
+// "sbj_void_" and the cancel's amendmentId. Cancelling a date starts it (a
+// repeated cancel joins it); follow it with RetrieveBulkJob. Each Season ticket
+// it voids is told by season.ticket.voided with reason date_cancelled.
+func SeasonDateCancelVoidJobID(amendmentID string) string {
+	return "sbj_void_" + amendmentID
+}
+
+// SeasonHolderImportRowsPerCall is the most rows one CreateHolderImport call
+// takes for a package of dates dates. Each row is fenced on every date: 100 up
+// to 20 dates, then 2300 / (dates + 3) rounded down, 43 at 50. A call with more
+// answers 422 invalid_rows with maxRows in the error's Body.
+func SeasonHolderImportRowsPerCall(dates int) int {
+	return max(1, min(100, 2300/(max(1, dates)+3)))
+}
+
 func seasonPath(seasonKey, suffix string) string {
 	return "/v1/seasons/" + escape(seasonKey) + suffix
 }
@@ -200,6 +216,11 @@ func (s *SeasonsService) Retrieve(ctx context.Context, seasonKey string) (map[st
 	return s.client.get(ctx, seasonPath(seasonKey, ""), nil)
 }
 
+// Update changes a Season at ExpectedRevision. The answer's singleTicketDates
+// may carry jobRefused: why the season_singles job could not start. The change
+// still stands, and sending SingleTickets true again opens any date still not
+// open. An exact retry with the same ExpectedRevision and IdempotencyKey is not
+// applied twice.
 func (s *SeasonsService) Update(
 	ctx context.Context, seasonKey string, p SeasonUpdateParams,
 ) (map[string]any, error) {
@@ -385,6 +406,10 @@ func (s *SeasonsService) ValidateBuyerRehearsal(
 	return s.client.post(ctx, seasonPath(seasonKey, "/buyer-rehearsals/validate"), nil, "")
 }
 
+// CreateHolderImport imports incumbent holders, as a dry run or for real. A
+// package holds 2 to 50 dates, and a call takes at most
+// SeasonHolderImportRowsPerCall(dates) rows (100 up to 20 dates); more answers
+// 422 invalid_rows, a *ValidationError with maxRows in its Body.
 func (s *SeasonsService) CreateHolderImport(
 	ctx context.Context, seasonKey string, p SeasonHolderImportParams,
 ) (map[string]any, error) {
@@ -491,6 +516,10 @@ func (s *SeasonsService) ListOccurrences(ctx context.Context, seasonKey string) 
 	return s.client.get(ctx, seasonPath(seasonKey, "/occurrences"), nil)
 }
 
+// CreateAmendment postpones, reschedules, replaces or cancels one date. A
+// "cancel" also voids every live ticket for the date as a date_cancel_void job,
+// SeasonDateCancelVoidJobID(amendmentId), which the answer does not name;
+// follow it with RetrieveBulkJob. With a Refund, refundJob names the refund job.
 func (s *SeasonsService) CreateAmendment(
 	ctx context.Context, seasonKey string, p SeasonAmendmentParams,
 ) (map[string]any, error) {

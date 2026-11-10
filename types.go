@@ -126,7 +126,7 @@ type WebhookEventName string
 // WebhookDeliveryStatus filters webhook delivery attempts.
 type WebhookDeliveryStatus string
 
-// The 56 public webhook event names, in the order the API lists them.
+// The 58 public webhook event names, in the order the API lists them.
 const (
 	WebhookEventSeatBooked                      WebhookEventName = "seat.booked"
 	WebhookEventSeatReleased                    WebhookEventName = "seat.released"
@@ -180,6 +180,8 @@ const (
 	WebhookEventSeasonPerformanceCancelled      WebhookEventName = "season.performance.cancelled"
 	WebhookEventSeasonPerformanceRescheduled    WebhookEventName = "season.performance.rescheduled"
 	WebhookEventSeasonBulkActionCompleted       WebhookEventName = "season.bulk_action.completed"
+	WebhookEventSeasonBlockReady                WebhookEventName = "season.block.ready"
+	WebhookEventSeasonBlockReleased             WebhookEventName = "season.block.released"
 	WebhookEventSeasonOrderPaid                 WebhookEventName = "season.order.paid"
 	WebhookEventSeasonOrderRefunded             WebhookEventName = "season.order.refunded"
 	WebhookEventSeriesCreated                   WebhookEventName = "series.created"

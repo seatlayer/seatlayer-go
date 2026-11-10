@@ -175,6 +175,56 @@ _, err = client.Holders.DeclineRenewalOffer(ctx, "holder_123", offerID,
     &seatlayer.SeasonRenewalDeclineParams{Reason: "Moving away"})
 ```
 
+### Season seats
+
+Season seats are the seats a season sets aside on every date before its sales open. A season
+buyer's hold then doesn't have to ask each date, and single-ticket buyers see those seats as
+unavailable. They are off for every season until you set `InventoryMode` to
+`seatlayer.SeasonInventoryModeBlock` on `Create` or `Update`. The season needs one package, and its
+sales must not have opened. Turning them on keeps the season's revision.
+
+```go
+_, err := client.Seasons.Update(ctx, seasonKey, seatlayer.SeasonUpdateParams{
+    ExpectedRevision: revision, InventoryMode: seatlayer.SeasonInventoryModeBlock,
+})
+answer, err := client.Seasons.SetAsideBlock(ctx, seasonKey, seatlayer.SeasonBlockSetAsideParams{
+    ExpectedRevision:     revision,
+    KeepForSingleTickets: &seatlayer.SeasonSeatSelection{SectionIDs: []string{"sec_family"}},
+})
+job := answer["job"].(map[string]any)
+for job["state"] == "planning" || job["state"] == "running" {
+    time.Sleep(2 * time.Second)
+    read, err := client.Seasons.RetrieveBulkJob(ctx, seasonKey, job["jobId"].(string))
+    if err != nil {
+        return err
+    }
+    job = read["job"].(map[string]any)
+}
+block, err := client.Seasons.RetrieveBlock(ctx, seasonKey)
+rev := int(block["block"].(map[string]any)["revision"].(float64))
+
+// Release unsold season seats to single sale. Leave At empty to release now.
+_, err = client.Seasons.ReleaseBlock(ctx, seasonKey, seatlayer.SeasonBlockReleaseParams{
+    ExpectedRevision: rev,
+    Scope:            seatlayer.SeasonBlockReleaseScope{All: true},
+    At:               "2026-12-01T09:00:00Z",
+})
+```
+
+- On an active season, block mode turns on by itself once every date has the seats, and
+  `WebhookEventSeasonBlockReady` (`season.block.ready`) is sent once. On a draft, `Publish` turns
+  it on. `WebhookEventSeasonBlockReleased` (`season.block.released`) is sent once a release has run.
+- In block mode, a date cancel (`CreateAmendment`, kind `cancel`) or `MarkPerformancePast` first
+  takes the date off every season seat. Until that finishes the answer is a `202`: check it with
+  `seatlayer.IsSeasonDateLeavePending(answer)`, then send the same request again after `Retry-After`.
+- Refusals come through `*APIError` and its typed wrappers with `Code`, and nothing changes. For
+  example `409 season_block_packages` (more than one package), `409 season_block_on_sale` (sales
+  have opened), or `409 block_not_ready` from `OpenSales` before block mode is on.
+- A partner's seat on a date (one a sales channel sells there) stays out of the block. It is
+  listed in the block's `notFreeOnEveryDate` with reason `channel`.
+
+The [Season seats docs](https://docs.seatlayer.io/server-api/seasons/#season-seats) list every refusal.
+
 ## Test vs live
 
 Keys carry their own mode. `sk_test_…` keys can only touch test-mode events and `sk_live_…` only

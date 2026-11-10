@@ -38,8 +38,8 @@ func TestSeasonDateCancelVoidJobIDAndHolderImportRowsPerCall(t *testing.T) {
 	}
 }
 
-func TestSeasonsMapAll87OperationsAndReplayClasses(t *testing.T) {
-	const seasonOperations = 87
+func TestSeasonsMapAll90OperationsAndReplayClasses(t *testing.T) {
+	const seasonOperations = 90
 	responses := make([]stub, seasonOperations)
 	for i := range responses {
 		responses[i] = stub{status: 200, body: `{}`}
@@ -97,7 +97,7 @@ func TestSeasonsMapAll87OperationsAndReplayClasses(t *testing.T) {
 	_, _ = client.Seasons.ListAudit(ctx, key)
 	_, _ = client.Seasons.ExportSupportSnapshot(ctx, key)
 
-	// The 39 operations added in Season platform slices 2a, 2.11, 2.20 and 2.8, from the shared table.
+	// The 42 operations added in Season platform slices 2a, 2.11, 2.20 and 2.8 and season seats, from the shared table.
 	var added []operationCase
 	for _, tc := range newOperationCases() {
 		if tc.group == "seasons" {
@@ -165,5 +165,64 @@ func TestSeasonsMapAll87OperationsAndReplayClasses(t *testing.T) {
 	}
 	if call(t, calls, 4).method != http.MethodPatch || call(t, calls, 5).method != http.MethodDelete {
 		t.Fatal("update/delete methods drifted")
+	}
+}
+
+// The phase 4 answers, shaped as the API sends them (the app repo's contract §2, §6 and §8).
+func TestSeasonSeatsAnswersReachTheCaller(t *testing.T) {
+	pending := `{"state":"finishing","code":"block_date_leave_pending","retryable":true,` +
+		`"eventKey":"ev_1","shardsLeft":[1],"shardCount":2,"message":"Still leaving one shard"}`
+	codes := []string{"season_block_not_enabled", "block_exists", "season_block_set_aside",
+		"season_inventory_locked", "date_leave_in_progress"}
+	responses := []stub{
+		{status: 202, body: `{"job":{"jobId":"sbsa_sbp_1","kind":"season_block_set_aside","state":"running"},"block":{"mode":"per_hold"}}`},
+		{status: 200, body: `{"job":{"jobId":"sbr_1","kind":"season_block_release","state":"planning"}}`},
+		{status: 202, body: pending, headers: map[string]string{"Retry-After": "2"}},
+		{status: 202, body: pending},
+	}
+	for _, code := range codes {
+		responses = append(responses, stub{status: 409, body: `{"error":"` + code + `","code":"` + code + `"}`})
+	}
+	client, calls := newTestClient(t, responses)
+	ctx := context.Background()
+
+	set, err := client.Seasons.SetAsideBlock(ctx, "sea_1", SeasonBlockSetAsideParams{ExpectedRevision: 7})
+	if err != nil || set["job"].(map[string]any)["kind"] != "season_block_set_aside" {
+		t.Fatalf("SetAsideBlock = %v, %v", set, err)
+	}
+	// No KeepForSingleTickets: nothing kept back, and the key is generated.
+	if body := call(t, calls, 0).body; body != `{"expectedRevision":7}` {
+		t.Fatalf("set-aside body = %s", body)
+	}
+	if call(t, calls, 0).header.Get("Idempotency-Key") == "" {
+		t.Fatal("set-aside sent no Idempotency-Key")
+	}
+	// A job of a kind this SDK did not know before reads as any other.
+	job, err := client.Seasons.RetrieveBulkJob(ctx, "sea_1", "sbr_1")
+	if err != nil || job["job"].(map[string]any)["kind"] != "season_block_release" {
+		t.Fatalf("RetrieveBulkJob = %v, %v", job, err)
+	}
+	cancel, err := client.Seasons.CreateAmendment(ctx, "sea_1", SeasonAmendmentParams{EventKey: "ev_1", Kind: "cancel"})
+	if err != nil || !IsSeasonDateLeavePending(cancel) {
+		t.Fatalf("CreateAmendment = %v, %v", cancel, err)
+	}
+	past, err := client.Seasons.MarkPerformancePast(ctx, "sea_1", "ev_1", SeasonMarkPastParams{})
+	if err != nil || !IsSeasonDateLeavePending(past) {
+		t.Fatalf("MarkPerformancePast = %v, %v", past, err)
+	}
+	if IsSeasonDateLeavePending(map[string]any{"amendment": map[string]any{"amendmentId": "am_1"}}) ||
+		IsSeasonDateLeavePending(map[string]any{"state": "finishing", "code": "season_busy"}) ||
+		IsSeasonDateLeavePending(map[string]any{"state": "done", "code": "block_date_leave_pending"}) ||
+		IsSeasonDateLeavePending(nil) {
+		t.Fatal("IsSeasonDateLeavePending accepted another answer")
+	}
+	for _, code := range codes {
+		_, err := client.Seasons.ReleaseBlock(ctx, "sea_1", SeasonBlockReleaseParams{
+			ExpectedRevision: 7, Scope: SeasonBlockReleaseScope{Labels: []string{"A-1"}},
+		})
+		var conflict *ConflictError
+		if !errors.As(err, &conflict) || conflict.Code != code {
+			t.Fatalf("ReleaseBlock error = %v, want ConflictError %s", err, code)
+		}
 	}
 }

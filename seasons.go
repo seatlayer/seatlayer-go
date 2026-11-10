@@ -46,6 +46,19 @@ func (p SeasonSelectionParams) body() map[string]any {
 	)
 }
 
+// SeasonInventoryMode is how a Season's seats are decided. Every Season answer
+// carries it as "inventoryMode": "block" once season seats are turned on for
+// it (inventoryMode "block" on create or update) or it sells from its block,
+// else "per_hold".
+type SeasonInventoryMode string
+
+const (
+	// SeasonInventoryModeBlock turns season seats on for the Season.
+	SeasonInventoryModeBlock SeasonInventoryMode = "block"
+	// SeasonInventoryModePerHold, the default, turns them off.
+	SeasonInventoryModePerHold SeasonInventoryMode = "per_hold"
+)
+
 type SeasonCreateParams struct {
 	Name                       string
 	Edition                    NullableField[string]
@@ -53,7 +66,11 @@ type SeasonCreateParams struct {
 	SourcePerformanceGroupKeys []string
 	// SingleTickets makes each date also sell its own single tickets once the
 	// Season is on sale. Nil leaves it out: Season only, the default.
-	SingleTickets  *bool
+	SingleTickets *bool
+	// InventoryMode SeasonInventoryModeBlock turns season seats on for this
+	// Season. Empty leaves it out: "per_hold", the default. Anything else
+	// answers 422 invalid_inventory_mode.
+	InventoryMode  SeasonInventoryMode
 	IdempotencyKey string
 }
 
@@ -79,7 +96,15 @@ type SeasonUpdateParams struct {
 	// SingleTickets turned on while the Season is on sale opens each upcoming
 	// date's own sales through its readiness checks; turned off, they stop. The
 	// answer's singleTicketDates says which. Nil leaves it unchanged.
-	SingleTickets  *bool
+	SingleTickets *bool
+	// InventoryMode SeasonInventoryModeBlock turns season seats on for this
+	// Season; SeasonInventoryModePerHold turns them off again, refused with
+	// 409 season_block_exists once seats are set aside. It does not change the
+	// Season's revision. Refused with 409 season_block_packages (more than one
+	// package), 409 season_block_on_sale (sales already opened without season
+	// seats), 409 season_not_draft_or_active, or 422 invalid_inventory_mode.
+	// Empty leaves it unchanged.
+	InventoryMode  SeasonInventoryMode
 	IdempotencyKey string
 }
 
@@ -174,6 +199,16 @@ func SeasonHolderImportRowsPerCall(dates int) int {
 	return max(1, min(100, 2300/(max(1, dates)+3)))
 }
 
+// IsSeasonDateLeavePending reports whether an answer is the 202 a season-seats
+// season's date cancel (CreateAmendment) or past date (MarkPerformancePast)
+// sends while the date is still leaving every season seat: "state" "finishing",
+// "code" "block_date_leave_pending", with "eventKey", "shardsLeft" and
+// "shardCount". It finishes by itself: send the same request again after
+// Retry-After to read how it ended.
+func IsSeasonDateLeavePending(answer map[string]any) bool {
+	return answer["state"] == "finishing" && answer["code"] == "block_date_leave_pending"
+}
+
 func seasonPath(seasonKey, suffix string) string {
 	return "/v1/seasons/" + escape(seasonKey) + suffix
 }
@@ -204,6 +239,9 @@ func (s *SeasonsService) Create(ctx context.Context, p SeasonCreateParams) (map[
 	if p.SingleTickets != nil {
 		body["singleTickets"] = *p.SingleTickets
 	}
+	if p.InventoryMode != "" {
+		body["inventoryMode"] = string(p.InventoryMode)
+	}
 	return s.client.postHeaderReplay(ctx, "/v1/seasons", body, p.IdempotencyKey)
 }
 
@@ -227,7 +265,8 @@ func (s *SeasonsService) Update(
 ) (map[string]any, error) {
 	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name),
 		"checkoutMode", stringOrNil(p.CheckoutMode), "audience", stringOrNil(p.Audience),
-		"singleTickets", pointerOrNil(p.SingleTickets))
+		"singleTickets", pointerOrNil(p.SingleTickets),
+		"inventoryMode", stringOrNil(string(p.InventoryMode)))
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
 	}
@@ -313,6 +352,9 @@ func (s *SeasonsService) sales(
 		params("expectedRevision", expectedRevision), "")
 }
 
+// OpenSales opens the Season's sales. With season seats turned on
+// (InventoryMode SeasonInventoryModeBlock) but the seats not set aside yet it
+// answers 409 block_not_ready.
 func (s *SeasonsService) OpenSales(ctx context.Context, seasonKey string, expectedRevision int) (map[string]any, error) {
 	return s.sales(ctx, seasonKey, "open", expectedRevision)
 }
@@ -522,7 +564,10 @@ func (s *SeasonsService) ListOccurrences(ctx context.Context, seasonKey string) 
 // SeasonDateCancelVoidJobID(amendmentId), which the answer does not name;
 // follow it with RetrieveBulkJob. With a Refund, refundJob names the refund job.
 // A cancelled date can't be moved (reschedule), postponed or replaced:
-// 409 performance_cancelled.
+// 409 performance_cancelled. On a season-seats season, a "cancel" first takes
+// the date off every season seat: while that finishes the answer is a 202
+// (check with IsSeasonDateLeavePending); send the same request again to read
+// the amendment.
 func (s *SeasonsService) CreateAmendment(
 	ctx context.Context, seasonKey string, p SeasonAmendmentParams,
 ) (map[string]any, error) {
@@ -957,7 +1002,9 @@ func (s *SeasonsService) DeletePlanPerformance(
 }
 
 // MarkPerformancePast marks a performance past so it stops blocking new Season sales.
-// A cancelled date answers 409 performance_cancelled.
+// A cancelled date answers 409 performance_cancelled. On a season-seats season
+// the date first leaves every season seat: while that finishes the answer is a
+// 202 (check with IsSeasonDateLeavePending).
 func (s *SeasonsService) MarkPerformancePast(
 	ctx context.Context, seasonKey, eventKey string, p SeasonMarkPastParams,
 ) (map[string]any, error) {
@@ -1208,4 +1255,87 @@ func (s *SeasonsService) ListBulkJobs(ctx context.Context, seasonKey string) (ma
 // offered, skipped and failed.
 func (s *SeasonsService) RetrieveBulkJob(ctx context.Context, seasonKey, jobID string) (map[string]any, error) {
 	return s.client.get(ctx, seasonPath(seasonKey, "/jobs/"+escape(jobID)), nil)
+}
+
+// SeasonSeatSelection names seats kept for single tickets, or released: by
+// section, category or label.
+type SeasonSeatSelection struct {
+	SectionIDs   []string `json:"sectionIds,omitempty"`
+	CategoryKeys []string `json:"categoryKeys,omitempty"`
+	Labels       []string `json:"labels,omitempty"`
+}
+
+// SeasonBlockSetAsideParams sets a Season's seats aside on every date.
+type SeasonBlockSetAsideParams struct {
+	// ExpectedRevision is the Season revision you read; another answers 409
+	// revision_mismatch.
+	ExpectedRevision int
+	// KeepForSingleTickets is left out of the block. Nil keeps nothing back:
+	// the block is every seat the packages price.
+	KeepForSingleTickets *SeasonSeatSelection
+	IdempotencyKey       string
+}
+
+// SeasonBlockReleaseScope is what a release covers: All, or one of the lists.
+type SeasonBlockReleaseScope struct {
+	All          bool     `json:"all,omitempty"`
+	SectionIDs   []string `json:"sectionIds,omitempty"`
+	CategoryKeys []string `json:"categoryKeys,omitempty"`
+	Labels       []string `json:"labels,omitempty"`
+}
+
+// SeasonBlockReleaseParams releases season seats to single sale.
+type SeasonBlockReleaseParams struct {
+	ExpectedRevision int
+	Scope            SeasonBlockReleaseScope
+	// EventKeys limits the release to these dates. Empty: every date still to come.
+	EventKeys []string
+	// At is an ISO time to release at. Empty: now.
+	At             string
+	Reason         string
+	IdempotencyKey string
+}
+
+// SetAsideBlock sets the Season's seats aside on every date: every seat its
+// packages price, minus KeepForSingleTickets. The answer is 202 {"job": ...,
+// "block": ...}: a season_block_set_aside job to follow with RetrieveBulkJob.
+// On an active Season block mode turns on by itself once every date has the
+// seats (season.block.ready); on a draft, Publish turns it on. Season seats
+// must be on for the Season (409 season_block_not_enabled otherwise). It is
+// retried safely with one Idempotency-Key, which replays the same answer; an
+// empty IdempotencyKey generates one.
+func (s *SeasonsService) SetAsideBlock(
+	ctx context.Context, seasonKey string, p SeasonBlockSetAsideParams,
+) (map[string]any, error) {
+	body := params("expectedRevision", p.ExpectedRevision)
+	if p.KeepForSingleTickets != nil {
+		body["keepForSingleTickets"] = p.KeepForSingleTickets
+	}
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/block"), body, p.IdempotencyKey)
+}
+
+// RetrieveBlock reads the Season's seats set aside on every date: "block" with
+// its "mode" ("block" once on, else "per_hold"), "state", "counts" and each
+// date's "state".
+func (s *SeasonsService) RetrieveBlock(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/block"), nil)
+}
+
+// ReleaseBlock releases season seats to single sale: every unsold seat
+// (Scope.All), or the sections, categories or seats named. The answer is 202
+// {"job": ..., "block": ...}: a season_block_release job to follow with
+// RetrieveBulkJob. season.block.released is sent once it has run on every
+// date. It is retried safely with one Idempotency-Key, which replays the same
+// release; an empty IdempotencyKey generates one.
+func (s *SeasonsService) ReleaseBlock(
+	ctx context.Context, seasonKey string, p SeasonBlockReleaseParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/block/release"),
+		params(
+			"expectedRevision", p.ExpectedRevision,
+			"scope", p.Scope,
+			"eventKeys", sliceOrNil(p.EventKeys),
+			"at", stringOrNil(p.At),
+			"reason", stringOrNil(p.Reason),
+		), p.IdempotencyKey)
 }

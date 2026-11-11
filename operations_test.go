@@ -202,6 +202,28 @@ func newOperationCases() []operationCase {
 		{group: "seasons", name: "RetrieveBulkJob", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.RetrieveBulkJob(ctx, season, "job/1")
 		}, want: "GET " + seasonBase + "/jobs/job%2F1"},
+		// Season seats (phase 4).
+		{group: "seasons", name: "SetAsideBlock", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.SetAsideBlock(ctx, season, SeasonBlockSetAsideParams{
+				ExpectedRevision: 7, KeepForSingleTickets: &SeasonSeatSelection{Labels: []string{"A-6"}},
+				IdempotencyKey: "block-1",
+			})
+		}, want: "POST " + seasonBase + "/block",
+			body:   `{"expectedRevision":7,"keepForSingleTickets":{"labels":["A-6"]}}`,
+			replay: true, key: "block-1", status: 202,
+			response: `{"job":{"jobId":"sbsa_sbp_1","kind":"season_block_set_aside","state":"running"},"block":{"mode":"per_hold"}}`},
+		{group: "seasons", name: "RetrieveBlock", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.RetrieveBlock(ctx, season)
+		}, want: "GET " + seasonBase + "/block", response: `{"block":{"mode":"block"}}`},
+		{group: "seasons", name: "ReleaseBlock", call: func(ctx context.Context, c *Client) (any, error) {
+			return c.Seasons.ReleaseBlock(ctx, season, SeasonBlockReleaseParams{
+				ExpectedRevision: 7, Scope: SeasonBlockReleaseScope{All: true}, EventKeys: []string{"ev/1"},
+				At: "2026-12-01T10:00:00Z", Reason: "Unsold",
+			})
+		}, want: "POST " + seasonBase + "/block/release",
+			body:   `{"expectedRevision":7,"scope":{"all":true},"eventKeys":["ev/1"],"at":"2026-12-01T10:00:00Z","reason":"Unsold"}`,
+			replay: true, status: 202,
+			response: `{"job":{"jobId":"sbr_1","kind":"season_block_release","state":"planning"},"block":{"mode":"block"}}`},
 		{group: "seasons", name: "RetrieveRenewalQuote", call: func(ctx context.Context, c *Client) (any, error) {
 			return c.Seasons.RetrieveRenewalQuote(ctx, season, "offer/1")
 		}, want: "GET " + seasonBase + "/renewal-offers/offer%2F1/quote",
@@ -447,9 +469,9 @@ func TestSeason2aOperationsCoverTheSpec(t *testing.T) {
 	for _, tc := range newOperationCases() {
 		counts[tc.group]++
 	}
-	want := map[string]int{"seasons": 39, "holders": 14, "orders": 9, "eventSales": 14, "eventSeries": 5}
+	want := map[string]int{"seasons": 42, "holders": 14, "orders": 9, "eventSales": 14, "eventSeries": 5}
 	if !reflect.DeepEqual(counts, want) {
-		t.Fatalf("operation cases per group = %v, want %v (81 in all)", counts, want)
+		t.Fatalf("operation cases per group = %v, want %v (84 in all)", counts, want)
 	}
 }
 
@@ -762,10 +784,11 @@ func TestWebhookAcceptsAllPublicEventNames(t *testing.T) {
 		"season.renewal.declined", "season.renewal.lapsed", "season.renewal.released", "season.operation.partial_terminal",
 		"season.amendment.applied", "season.performance.added", "season.performance.removed", "season.performance.past",
 		"season.performance.postponed", "season.performance.cancelled", "season.performance.rescheduled", "season.bulk_action.completed",
+		"season.block.ready", "season.block.released",
 		"season.order.paid", "season.order.refunded", "series.created", "series.dates_added",
 	}
-	if len(names) != 56 || len(want) != 56 {
-		t.Fatalf("supported names = %d, listed = %d, want 56", len(names), len(want))
+	if len(names) != 58 || len(want) != 58 {
+		t.Fatalf("supported names = %d, listed = %d, want 58", len(names), len(want))
 	}
 	for _, name := range want {
 		if _, ok := supportedWebhookEvents[WebhookEventName(name)]; !ok {
@@ -1010,5 +1033,126 @@ func TestSeasonSingleTicketsReachTheWireOnCreateAndUpdate(t *testing.T) {
 	dates, ok := updated["singleTicketDates"].(map[string]any)
 	if !ok || dates["direction"] != "open" {
 		t.Fatalf("singleTicketDates = %v, want the dates it opened", updated["singleTicketDates"])
+	}
+}
+
+// InventoryMode reaches the wire on create and update only when set, and every
+// Season answer's inventoryMode reads back.
+func TestSeasonInventoryModeReachesTheWireAndReadsBack(t *testing.T) {
+	block := stub{status: 200, body: `{"season":{"key":"sea_1","revision":5,"inventoryMode":"block"}}`}
+	perHold := stub{status: 200, body: `{"season":{"key":"sea_2","revision":1,"inventoryMode":"per_hold"}}`}
+	list := stub{status: 200, body: `{"seasons":[{"key":"sea_1","inventoryMode":"block"},` +
+		`{"key":"sea_2","inventoryMode":"per_hold"}],"nextCursor":null}`}
+	client, calls := newTestClient(t, []stub{block, perHold, block, perHold, perHold, block, list})
+	ctx := context.Background()
+
+	created, err := client.Seasons.Create(ctx, SeasonCreateParams{
+		Name: "Series", EventKeys: []string{"ev_1", "ev_2"}, InventoryMode: SeasonInventoryModeBlock,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := client.Seasons.Create(ctx, SeasonCreateParams{Name: "Series", EventKeys: []string{"ev_1", "ev_2"}}); err != nil {
+		t.Fatalf("Create without inventory mode: %v", err)
+	}
+	turnedOn, err := client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{
+		ExpectedRevision: 5, InventoryMode: SeasonInventoryModeBlock,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if _, err := client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{
+		ExpectedRevision: 5, InventoryMode: SeasonInventoryModePerHold,
+	}); err != nil {
+		t.Fatalf("Update to per_hold: %v", err)
+	}
+	if _, err := client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{ExpectedRevision: 5, Name: "Series 2"}); err != nil {
+		t.Fatalf("Update without inventory mode: %v", err)
+	}
+	retrieved, err := client.Seasons.Retrieve(ctx, "sea_1")
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	listed, err := client.Seasons.List(ctx, nil)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	assertJSONBody(t, call(t, calls, 0).body, `{"name":"Series","eventKeys":["ev_1","ev_2"],"inventoryMode":"block"}`)
+	assertJSONBody(t, call(t, calls, 1).body, `{"name":"Series","eventKeys":["ev_1","ev_2"]}`)
+	assertJSONBody(t, call(t, calls, 2).body, `{"expectedRevision":5,"inventoryMode":"block"}`)
+	assertJSONBody(t, call(t, calls, 3).body, `{"expectedRevision":5,"inventoryMode":"per_hold"}`)
+	assertJSONBody(t, call(t, calls, 4).body, `{"expectedRevision":5,"name":"Series 2"}`)
+	wantLines := []string{
+		"POST /v1/seasons", "POST /v1/seasons", "PATCH /v1/seasons/sea_1", "PATCH /v1/seasons/sea_1",
+		"PATCH /v1/seasons/sea_1", "GET /v1/seasons/sea_1", "GET /v1/seasons",
+	}
+	for index, want := range wantLines {
+		if got := requestLine(call(t, calls, index)); got != want {
+			t.Fatalf("request %d = %q, want %q", index, got, want)
+		}
+	}
+	for name, answer := range map[string]map[string]any{"Create": created, "Update": turnedOn, "Retrieve": retrieved} {
+		season, _ := answer["season"].(map[string]any)
+		if season["inventoryMode"] != string(SeasonInventoryModeBlock) {
+			t.Fatalf("%s inventoryMode = %v, want block", name, season["inventoryMode"])
+		}
+	}
+	items, _ := listed["seasons"].([]any)
+	var modes []string
+	for _, item := range items {
+		mode, _ := item.(map[string]any)["inventoryMode"].(string)
+		modes = append(modes, mode)
+	}
+	if !reflect.DeepEqual(modes, []string{"block", "per_hold"}) {
+		t.Fatalf("List inventoryMode = %v, want [block per_hold]", modes)
+	}
+}
+
+// The inventory mode refusals, and opening sales before the seats are set
+// aside, come back as the typed errors with their code.
+func TestSeasonInventoryModeRefusalsCarryTheirCode(t *testing.T) {
+	refusals := []struct {
+		status int
+		code   string
+	}{
+		{409, "season_block_packages"}, {409, "season_block_on_sale"}, {409, "season_not_draft_or_active"},
+		{409, "season_block_exists"}, {422, "invalid_inventory_mode"},
+	}
+	var responses []stub
+	for _, refusal := range refusals {
+		responses = append(responses, stub{
+			status: refusal.status,
+			body:   `{"error":"` + refusal.code + `","code":"` + refusal.code + `","message":"refused"}`,
+		})
+	}
+	responses = append(responses, stub{status: 409, body: `{"error":"block_not_ready","code":"block_not_ready"}`})
+	client, calls := newTestClient(t, responses)
+	ctx := context.Background()
+
+	for _, refusal := range refusals {
+		_, err := client.Seasons.Update(ctx, "sea_1", SeasonUpdateParams{
+			ExpectedRevision: 5, InventoryMode: SeasonInventoryModeBlock,
+		})
+		var apiErr *APIError
+		var conflict *ConflictError
+		var validation *ValidationError
+		switch {
+		case errors.As(err, &conflict):
+			apiErr = &conflict.APIError
+		case errors.As(err, &validation):
+			apiErr = &validation.APIError
+		}
+		if apiErr == nil || apiErr.Status != refusal.status || apiErr.Code != refusal.code {
+			t.Fatalf("Update error = %v, want %d %s", err, refusal.status, refusal.code)
+		}
+	}
+	_, err := client.Seasons.OpenSales(ctx, "sea_1", 5)
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) || conflict.Code != "block_not_ready" {
+		t.Fatalf("OpenSales error = %v, want ConflictError block_not_ready", err)
+	}
+	if len(*calls) != len(responses) {
+		t.Fatalf("sent %d requests, want %d", len(*calls), len(responses))
 	}
 }

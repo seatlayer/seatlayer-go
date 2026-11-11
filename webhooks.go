@@ -170,6 +170,8 @@ var supportedWebhookEvents = map[WebhookEventName]struct{}{
 	WebhookEventSeasonPerformanceCancelled:      {},
 	WebhookEventSeasonPerformanceRescheduled:    {},
 	WebhookEventSeasonBulkActionCompleted:       {},
+	WebhookEventSeasonBlockReady:                {},
+	WebhookEventSeasonBlockReleased:             {},
 	WebhookEventSeasonOrderPaid:                 {},
 	WebhookEventSeasonOrderRefunded:             {},
 	WebhookEventSeriesCreated:                   {},

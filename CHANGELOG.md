@@ -1,5 +1,32 @@
 # Changelog
 
+## Next: 0.9.0, season seats (joins the season 2a section under ## 0.9.0 in the version PR; publish only once the phase 4 API is live on production)
+
+- Season seats: `Seasons.SetAsideBlock` (`POST /v1/seasons/:key/block`), `Seasons.RetrieveBlock`
+  and `Seasons.ReleaseBlock` (`POST /v1/seasons/:key/block/release`), with
+  `SeasonBlockSetAsideParams`, `SeasonBlockReleaseParams`, `SeasonBlockReleaseScope` and
+  `SeasonSeatSelection`. Each write answers `{"job": ..., "block": ...}`; follow the job with
+  `RetrieveBulkJob` (kinds `season_block_set_aside` and `season_block_release`, read by id, not
+  listed). Both writes are retried safely with one Idempotency-Key, generated when none is given.
+- `InventoryMode` on season create and update (`SeasonCreateParams`, `SeasonUpdateParams`; opt a
+  season into season seats), read back on every season (`"inventoryMode"`). Type
+  `SeasonInventoryMode` with `SeasonInventoryModeBlock` and `SeasonInventoryModePerHold`.
+- Webhook names `WebhookEventSeasonBlockReady` (`season.block.ready`) and
+  `WebhookEventSeasonBlockReleased` (`season.block.released`); `Webhooks.Create` and `Update`
+  accept them (58 names).
+- A season-seats season's date cancel (`CreateAmendment`) or past date (`MarkPerformancePast`)
+  can answer `202` while the date leaves every season seat: `IsSeasonDateLeavePending` recognises
+  it.
+- New refusals come through `*APIError` and its typed wrappers with `Code`:
+  `season_block_not_enabled`, `block_exists`, `block_not_ready`, `season_not_draft_or_active`,
+  `block_selection_empty`, `seat_not_in_block`, `season_block_set_aside`, `season_inventory_locked`,
+  `date_leave_in_progress`.
+  `InventoryMode` can also answer `season_block_packages` (more than one package),
+  `season_block_on_sale`, `season_block_exists` and `invalid_inventory_mode`. The set-aside can
+  also answer `season_block_packages`, `season_block_one_package`, `plan_not_published`,
+  `season_block_undoing`, `chart_unavailable` and `dates_missing`, and the release
+  `release_mismatch`. On `503 season_busy` or `season_not_configured`, send the same request again.
+
 ## Unreleased
 
 - A date its season cancelled never opens again: `Events.TransitionSales` to `testable` or

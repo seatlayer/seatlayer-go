@@ -39,6 +39,8 @@ type EventListParams struct {
 	// NoCounts drops live availability counts, which cost the server one
 	// round-trip per event. All sets this automatically.
 	NoCounts bool
+	// SeriesKey lists only the dates of this event series.
+	SeriesKey string
 }
 
 func (p *EventListParams) query() url.Values {
@@ -49,6 +51,7 @@ func (p *EventListParams) query() url.Values {
 	setIfNotEmpty(values, "workspaceId", p.WorkspaceID)
 	setIfNotEmpty(values, "externalRef", p.ExternalRef)
 	setIfNotEmpty(values, "cursor", p.Cursor)
+	setIfNotEmpty(values, "seriesKey", p.SeriesKey)
 	if p.Limit > 0 {
 		values.Set("limit", strconv.Itoa(p.Limit))
 	}
@@ -230,7 +233,8 @@ func (s *EventsService) Close(ctx context.Context, eventKey string) (map[string]
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/close", nil, "")
 }
 
-// Reopen resumes buyer sales.
+// Reopen resumes buyer sales. A date its season cancelled never opens again:
+// 409 season_date_cancelled.
 func (s *EventsService) Reopen(ctx context.Context, eventKey string) (map[string]any, error) {
 	return s.client.post(ctx, "/v1/events/"+escape(eventKey)+"/reopen", nil, "")
 }

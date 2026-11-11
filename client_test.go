@@ -598,6 +598,65 @@ func TestAllEventsSkipsCountsFanout(t *testing.T) {
 	}
 }
 
+func TestEventsFilterBySeries(t *testing.T) {
+	client, calls := newTestClient(t, []stub{
+		{status: 200, body: `{"events":[]}`},
+		{status: 200, body: `{"events":[]}`},
+	})
+	_, _ = client.Events.List(context.Background(), &EventListParams{SeriesKey: "ser a/b", Limit: 10})
+	if got := call(t, calls, 0).query; got != "limit=10&seriesKey=ser+a%2Fb" {
+		t.Fatalf("query = %q", got)
+	}
+	for range client.Events.All(context.Background(), &EventListParams{SeriesKey: "ser_1"}) {
+	}
+	if got := call(t, calls, 1).query; got != "counts=0&seriesKey=ser_1" {
+		t.Fatalf("All query = %q", got)
+	}
+}
+
+func TestEventSeriesFromAnEvent(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 202, body: `{"series":{"seriesKey":"ser_2"},"jobId":"job_4"}`}})
+	_, err := client.EventSeries.Create(context.Background(), EventSeriesCreateParams{
+		FromEventKey: "lighthouse-keeper",
+		Schedule:     EventSeriesSchedule{Rule: "daily", From: "2026-11-06", Until: "2026-11-19", Times: []string{"14:00", "20:15"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No name or chartKey: the series takes the event's own.
+	want := `{"fromEventKey":"lighthouse-keeper","schedule":{"rule":"daily","from":"2026-11-06","until":"2026-11-19",` +
+		`"times":["14:00","20:15"]}}`
+	if got := call(t, calls, 0).body; got != want {
+		t.Fatalf("body = %s", got)
+	}
+}
+
+// A series create given up for its key is a conflict the SDK never retries:
+// only a new Idempotency-Key gets past it.
+func TestEventSeriesCreateAbandonedIsAConflictOnce(t *testing.T) {
+	client, calls := newTestClient(t, []stub{{status: 409, body: `{"error":"create_abandoned","code":"create_abandoned",` +
+		`"message":"This series never started and was given up when another request came for the event. ` +
+		`Send the request again with a new Idempotency-Key."}`}}, WithMaxRetries(3))
+	_, err := client.EventSeries.Create(context.Background(), EventSeriesCreateParams{
+		FromEventKey:   "ev_1",
+		Schedule:       EventSeriesSchedule{Rule: "daily", From: "2026-11-06", Until: "2026-11-08", Times: []string{"20:00"}},
+		IdempotencyKey: "series-3",
+	})
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want *ConflictError, got %T", err)
+	}
+	if conflict.Code != "create_abandoned" {
+		t.Fatalf("code = %q, want create_abandoned", conflict.Code)
+	}
+	if !strings.Contains(conflict.Message, "new Idempotency-Key") {
+		t.Fatalf("message = %q, want it to ask for a new Idempotency-Key", conflict.Message)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(*calls))
+	}
+}
+
 func TestSinglePageKeepsCounts(t *testing.T) {
 	client, calls := newTestClient(t, []stub{{status: 200, body: `{"events":[]}`}})
 	_, _ = client.Events.List(context.Background(), &EventListParams{Limit: 10})

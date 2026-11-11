@@ -2,12 +2,45 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 )
 
-func TestSeasonsMapAll48OperationsAndReplayClasses(t *testing.T) {
-	responses := make([]stub, 48)
+// The void job of a cancelled date is named from the amendment, and a holder
+// import call is sized by its package's dates; a call over it is a typed 422.
+func TestSeasonDateCancelVoidJobIDAndHolderImportRowsPerCall(t *testing.T) {
+	if got := SeasonDateCancelVoidJobID("amd_1"); got != "sbj_void_amd_1" {
+		t.Fatalf("void job id = %q, want sbj_void_amd_1", got)
+	}
+	for _, tc := range []struct{ dates, rows int }{{1, 100}, {20, 100}, {21, 95}, {50, 43}, {0, 100}, {5000, 1}} {
+		if got := SeasonHolderImportRowsPerCall(tc.dates); got != tc.rows {
+			t.Errorf("rows per call at %d dates = %d, want %d", tc.dates, got, tc.rows)
+		}
+	}
+
+	client, calls := newTestClient(t, []stub{{status: 422, body: `{"error":"invalid_rows","code":"invalid_rows",` +
+		`"message":"At most 43 rows a call for this package.","maxRows":43}`}})
+	_, err := client.Seasons.CreateHolderImport(context.Background(), "sea_1",
+		SeasonHolderImportParams{SuccessorPlanActivationID: "spa_1", Rows: []SeasonHolderImportRow{}})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("want *ValidationError, got %T", err)
+	}
+	if validation.Code != "invalid_rows" {
+		t.Fatalf("code = %q, want invalid_rows", validation.Code)
+	}
+	if got := validation.Body["maxRows"]; got != float64(43) {
+		t.Fatalf("maxRows = %v, want 43", got)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(*calls))
+	}
+}
+
+func TestSeasonsMapAll87OperationsAndReplayClasses(t *testing.T) {
+	const seasonOperations = 87
+	responses := make([]stub, seasonOperations)
 	for i := range responses {
 		responses[i] = stub{status: 200, body: `{}`}
 	}
@@ -64,6 +97,15 @@ func TestSeasonsMapAll48OperationsAndReplayClasses(t *testing.T) {
 	_, _ = client.Seasons.ListAudit(ctx, key)
 	_, _ = client.Seasons.ExportSupportSnapshot(ctx, key)
 
+	// The 39 operations added in Season platform slices 2a, 2.11, 2.20 and 2.8, from the shared table.
+	var added []operationCase
+	for _, tc := range newOperationCases() {
+		if tc.group == "seasons" {
+			added = append(added, tc)
+			_, _ = tc.call(ctx, client)
+		}
+	}
+
 	want := []string{
 		"GET /v1/seasons?cursor=c%2F1&limit=20&structureState=draft&workspaceId=ws+1",
 		"POST /v1/seasons/validate", "POST /v1/seasons", "GET /v1/seasons/sea%2Fa",
@@ -94,13 +136,17 @@ func TestSeasonsMapAll48OperationsAndReplayClasses(t *testing.T) {
 		"POST /v1/seasons/sea%2Fa/outbox/occurrence%2F1/replay", "GET /v1/seasons/sea%2Fa/audit",
 		"GET /v1/seasons/sea%2Fa/export",
 	}
-	if len(*calls) != len(want) {
-		t.Fatalf("calls = %d, want %d", len(*calls), len(want))
+	replay := map[int]bool{2: true, 4: true, 5: true, 10: true, 18: true, 27: true, 29: true, 38: true}
+	for _, tc := range added {
+		want = append(want, tc.want)
+		replay[len(want)-1] = tc.replay
+	}
+	if len(want) != seasonOperations || len(*calls) != seasonOperations {
+		t.Fatalf("calls = %d, want list = %d, want %d", len(*calls), len(want), seasonOperations)
 	}
 	if got := call(t, calls, 26).body; got != "" {
 		t.Fatalf("rehearsal body = %q, want empty", got)
 	}
-	replay := map[int]bool{2: true, 4: true, 5: true, 10: true, 18: true, 27: true, 29: true, 38: true}
 	for i, expected := range want {
 		got := call(t, calls, i)
 		actual := got.method + " " + got.escapedPath

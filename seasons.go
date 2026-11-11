@@ -2,6 +2,7 @@ package seatlayer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -50,14 +51,36 @@ type SeasonCreateParams struct {
 	Edition                    NullableField[string]
 	EventKeys                  []string
 	SourcePerformanceGroupKeys []string
-	IdempotencyKey             string
+	// SingleTickets makes each date also sell its own single tickets once the
+	// Season is on sale. Nil leaves it out: Season only, the default.
+	SingleTickets  *bool
+	IdempotencyKey string
 }
 
 type SeasonUpdateParams struct {
 	ExpectedRevision int
 	Name             string
 	Edition          NullableField[string]
-	IdempotencyKey   string
+	// CheckoutMode is who takes the money: "seatlayer" or "server". Empty
+	// leaves it unchanged; it cannot go back to undecided, and it is fixed once
+	// a live booking exists.
+	CheckoutMode string
+	// TransferCutoffHours is how many hours (0 to 720) before a date starts its
+	// tickets stop being sent to others. FieldNull means the club default
+	// (Settings › Ticket site), or until it starts when the club has none.
+	TransferCutoffHours NullableField[int]
+	// ReturnCutoffHours is how many hours (0 to 720) before a date starts a
+	// holder can no longer give a seat back. FieldNull means the club default.
+	ReturnCutoffHours NullableField[int]
+	// Audience is "embed_only" or "public" (listed on your SeatLayer website;
+	// an ended Season cannot become public, 409 sales_ended). Empty leaves it
+	// unchanged.
+	Audience string
+	// SingleTickets turned on while the Season is on sale opens each upcoming
+	// date's own sales through its readiness checks; turned off, they stop. The
+	// answer's singleTicketDates says which. Nil leaves it unchanged.
+	SingleTickets  *bool
+	IdempotencyKey string
 }
 
 type SeasonPlanCreateParams struct {
@@ -95,6 +118,9 @@ type SeasonHolderImportRow struct {
 	PriorContractRef      string   `json:"priorContractRef"`
 	Labels                []string `json:"labels"`
 	ExistingBookingRef    *string  `json:"existingBookingRef,omitempty"`
+	// HolderEmail and HolderName are where the holder's renewal emails go.
+	HolderEmail *string `json:"holderEmail,omitempty"`
+	HolderName  *string `json:"holderName,omitempty"`
 }
 
 type SeasonHolderImportParams struct {
@@ -112,16 +138,40 @@ type SeasonRenewalOffersParams struct {
 }
 
 type SeasonAmendmentParams struct {
-	EventKey       string
-	Kind           string
-	StartsAt       int64
-	Name           string
+	EventKey string
+	// Kind is "reschedule", "replace", "cancel_exception", "postpone" (the
+	// date stays with no new time yet), or "cancel" (it will not happen).
+	Kind     string
+	StartsAt int64
+	Name     string
+	// Refund, with Kind "cancel" only, refunds each SeatLayer order's share of
+	// the date as a job: "none" (the default) or "per_date". A whole-order
+	// refund is the order refund. Empty leaves it out.
+	Refund string
+	// Reason is kept on the refund job. Empty leaves it out.
+	Reason         string
 	IdempotencyKey string
 }
 
 type SeasonSupportLookupParams struct {
 	BookingRef string
 	HolderRef  string
+}
+
+// SeasonDateCancelVoidJobID names the job voiding a cancelled date's tickets:
+// "sbj_void_" and the cancel's amendmentId. Cancelling a date starts it (a
+// repeated cancel joins it); follow it with RetrieveBulkJob. Each Season ticket
+// it voids is told by season.ticket.voided with reason date_cancelled.
+func SeasonDateCancelVoidJobID(amendmentID string) string {
+	return "sbj_void_" + amendmentID
+}
+
+// SeasonHolderImportRowsPerCall is the most rows one CreateHolderImport call
+// takes for a package of dates dates. Each row is fenced on every date: 100 up
+// to 20 dates, then 2300 / (dates + 3) rounded down, 43 at 50. A call with more
+// answers 422 invalid_rows with maxRows in the error's Body.
+func SeasonHolderImportRowsPerCall(dates int) int {
+	return max(1, min(100, 2300/(max(1, dates)+3)))
 }
 
 func seasonPath(seasonKey, suffix string) string {
@@ -151,6 +201,9 @@ func (s *SeasonsService) Create(ctx context.Context, p SeasonCreateParams) (map[
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
 	}
+	if p.SingleTickets != nil {
+		body["singleTickets"] = *p.SingleTickets
+	}
 	return s.client.postHeaderReplay(ctx, "/v1/seasons", body, p.IdempotencyKey)
 }
 
@@ -164,12 +217,25 @@ func (s *SeasonsService) Retrieve(ctx context.Context, seasonKey string) (map[st
 	return s.client.get(ctx, seasonPath(seasonKey, ""), nil)
 }
 
+// Update changes a Season at ExpectedRevision. The answer's singleTicketDates
+// may carry jobRefused: why the season_singles job could not start. The change
+// still stands, and sending SingleTickets true again opens any date still not
+// open. An exact retry with the same ExpectedRevision and IdempotencyKey is not
+// applied twice.
 func (s *SeasonsService) Update(
 	ctx context.Context, seasonKey string, p SeasonUpdateParams,
 ) (map[string]any, error) {
-	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name))
+	body := params("expectedRevision", p.ExpectedRevision, "name", stringOrNil(p.Name),
+		"checkoutMode", stringOrNil(p.CheckoutMode), "audience", stringOrNil(p.Audience),
+		"singleTickets", pointerOrNil(p.SingleTickets))
 	if value, present := p.Edition.requestValue(); present {
 		body["edition"] = value
+	}
+	if value, present := p.TransferCutoffHours.requestValue(); present {
+		body["transferCutoffHours"] = value
+	}
+	if value, present := p.ReturnCutoffHours.requestValue(); present {
+		body["returnCutoffHours"] = value
 	}
 	return s.client.mutationHeaderReplay(
 		ctx, http.MethodPatch, seasonPath(seasonKey, ""), body, p.IdempotencyKey)
@@ -341,6 +407,10 @@ func (s *SeasonsService) ValidateBuyerRehearsal(
 	return s.client.post(ctx, seasonPath(seasonKey, "/buyer-rehearsals/validate"), nil, "")
 }
 
+// CreateHolderImport imports incumbent holders, as a dry run or for real. A
+// package holds 2 to 50 dates, and a call takes at most
+// SeasonHolderImportRowsPerCall(dates) rows (100 up to 20 dates); more answers
+// 422 invalid_rows, a *ValidationError with maxRows in its Body.
 func (s *SeasonsService) CreateHolderImport(
 	ctx context.Context, seasonKey string, p SeasonHolderImportParams,
 ) (map[string]any, error) {
@@ -358,6 +428,12 @@ func (s *SeasonsService) RetrieveHolderImport(
 	return s.client.get(ctx, seasonPath(seasonKey, "/imports/"+escape(importID)), nil)
 }
 
+// CreateRenewalOffers makes one renewal offer per eligible prior Contract.
+// For 100 contracts or fewer it answers 201 {"offers": [...]}. Above 100 it
+// answers 202 {"job": ..., "batchId": ...}: a renewal_run job makes the offers.
+// Follow it with RetrieveBulkJob, then read the offers with ListRenewalOffers.
+// It is retried safely with one Idempotency-Key, which answers the same job.
+// It can refuse with 409 job_mismatch or 503 season_not_configured.
 func (s *SeasonsService) CreateRenewalOffers(
 	ctx context.Context, seasonKey string, p SeasonRenewalOffersParams,
 ) (map[string]any, error) {
@@ -369,8 +445,18 @@ func (s *SeasonsService) CreateRenewalOffers(
 		), p.IdempotencyKey)
 }
 
-func (s *SeasonsService) ListRenewalOffers(ctx context.Context, seasonKey string) (map[string]any, error) {
-	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-offers"), nil)
+// ListRenewalOffers reads one page of renewal offers, newest first; the answer's
+// nextCursor reads the next page and is null on the last. Pass one
+// SeasonOfferPageParams to page (Limit 1-100, default 100); existing calls
+// compile unchanged and read the first page.
+func (s *SeasonsService) ListRenewalOffers(
+	ctx context.Context, seasonKey string, options ...SeasonOfferPageParams,
+) (map[string]any, error) {
+	query, err := offerPageQuery("ListRenewalOffers", options)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-offers"), query)
 }
 
 func (s *SeasonsService) RetrieveRenewalOffer(
@@ -404,11 +490,20 @@ func (s *SeasonsService) CommitRenewalOffer(
 		), "")
 }
 
+// DeclineRenewalOffer declines an offer and releases its seats at once. Pass
+// one SeasonRenewalDeclineParams to keep the holder's reason on the offer.
 func (s *SeasonsService) DeclineRenewalOffer(
-	ctx context.Context, seasonKey, offerID string,
+	ctx context.Context, seasonKey, offerID string, options ...SeasonRenewalDeclineParams,
 ) (map[string]any, error) {
+	if len(options) > 1 {
+		return nil, errors.New("seatlayer: DeclineRenewalOffer accepts at most one params value")
+	}
+	body := map[string]any{}
+	if len(options) == 1 {
+		body = options[0].body()
+	}
 	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/decline"),
-		map[string]any{}, "")
+		body, "")
 }
 
 func (s *SeasonsService) ReleaseRenewalOffer(
@@ -422,6 +517,12 @@ func (s *SeasonsService) ListOccurrences(ctx context.Context, seasonKey string) 
 	return s.client.get(ctx, seasonPath(seasonKey, "/occurrences"), nil)
 }
 
+// CreateAmendment postpones, reschedules, replaces or cancels one date. A
+// "cancel" also voids every live ticket for the date as a date_cancel_void job,
+// SeasonDateCancelVoidJobID(amendmentId), which the answer does not name;
+// follow it with RetrieveBulkJob. With a Refund, refundJob names the refund job.
+// A cancelled date can't be moved (reschedule), postponed or replaced:
+// 409 performance_cancelled.
 func (s *SeasonsService) CreateAmendment(
 	ctx context.Context, seasonKey string, p SeasonAmendmentParams,
 ) (map[string]any, error) {
@@ -431,6 +532,8 @@ func (s *SeasonsService) CreateAmendment(
 			"kind", p.Kind,
 			"startsAt", int64OrNil(p.StartsAt),
 			"name", stringOrNil(p.Name),
+			"refund", stringOrNil(p.Refund),
+			"reason", stringOrNil(p.Reason),
 		), p.IdempotencyKey)
 }
 
@@ -480,4 +583,629 @@ func (s *SeasonsService) ListAudit(ctx context.Context, seasonKey string) (map[s
 
 func (s *SeasonsService) ExportSupportSnapshot(ctx context.Context, seasonKey string) (map[string]any, error) {
 	return s.client.get(ctx, seasonPath(seasonKey, "/export"), nil)
+}
+
+// SeasonHolderImportFromSeasonParams derives renewal rights from a previous
+// Season's holders instead of uploaded rows.
+type SeasonHolderImportFromSeasonParams struct {
+	SourceSeasonID            string
+	SuccessorPlanActivationID string
+	// DryRun checks the import without committing it. Nil leaves it out.
+	DryRun         *bool
+	IdempotencyKey string
+}
+
+// SeasonPerformancesCreateParams creates performances inside a draft Season
+// from a repeat rule.
+type SeasonPerformancesCreateParams struct {
+	TitlePattern string
+	// FirstStartsAt is epoch milliseconds. Zero leaves it out.
+	FirstStartsAt int64
+	Timezone      string
+	// Repeat is one of none, daily, weekly, biweekly or dates.
+	Repeat string
+	// Count is how many performances to create. Zero leaves it out.
+	Count int
+	// Dates are epoch milliseconds, used with Repeat "dates".
+	Dates           []int64
+	Venue           NullableField[string]
+	DurationMinutes NullableField[int]
+	// Region places live inventory near the venue. Empty leaves it out.
+	Region           EventHostingRegion
+	AttachToPlanKeys []string
+	IdempotencyKey   string
+}
+
+// SeasonPerformancesAttachParams attaches existing events to a draft Season.
+type SeasonPerformancesAttachParams struct {
+	EventKeys        []string
+	AttachToPlanKeys []string
+	IdempotencyKey   string
+}
+
+// SeasonPlanUpdateParams renames or re-scopes a draft package. Empty fields
+// are left out.
+type SeasonPlanUpdateParams struct {
+	Name           string
+	EventKeys      []string
+	IdempotencyKey string
+}
+
+// SeasonCheckoutTestParams scopes a Season checkout test.
+type SeasonCheckoutTestParams struct {
+	PlanKey string
+	// Quantity is the number of seats, 1 to 4. Zero leaves it out.
+	Quantity       int
+	IdempotencyKey string
+}
+
+// The price types a package can price a category for.
+const (
+	SeasonPriceTypeAdult      = "adult"
+	SeasonPriceTypeChild      = "child"
+	SeasonPriceTypeConcession = "concession"
+	SeasonPriceTypeSenior     = "senior"
+	SeasonPriceTypeStudent    = "student"
+)
+
+// SeasonPackagePrice is one category price, in minor units, for a package.
+type SeasonPackagePrice struct {
+	CategoryKey string `json:"categoryKey"`
+	// PriceTypeKey is one of the SeasonPriceType constants. Empty leaves it
+	// out, which prices the category for adults. Each category takes each type once.
+	PriceTypeKey string `json:"priceTypeKey,omitempty"`
+	UnitPrice    int64  `json:"unitPrice"`
+}
+
+// SeasonPackagePricesParams replaces every category price of a package.
+type SeasonPackagePricesParams struct {
+	Prices []SeasonPackagePrice
+	// Currency is a three-letter code. Empty leaves it out.
+	Currency       string
+	IdempotencyKey string
+}
+
+// SeasonMarkPastParams marks a Season performance as past.
+type SeasonMarkPastParams struct {
+	Force          bool
+	IdempotencyKey string
+}
+
+// SeasonInventorySource names where returned seats came from: set exactly one
+// of BookingActionID or RenewalOfferID.
+type SeasonInventorySource struct {
+	BookingActionID string `json:"bookingActionId,omitempty"`
+	RenewalOfferID  string `json:"renewalOfferId,omitempty"`
+}
+
+// SeasonOccurrenceReturnParams returns one occurrence allocation to Event inventory.
+type SeasonOccurrenceReturnParams struct {
+	ActionID         string
+	BookingRef       string
+	PlanActivationID string
+	Labels           []string
+	Source           SeasonInventorySource
+}
+
+// SeasonOccurrenceReclaimParams reclaims returned occurrence inventory.
+type SeasonOccurrenceReclaimParams struct {
+	ActionID         string
+	ReturnActionID   string
+	BookingRef       string
+	PlanActivationID string
+	Labels           []string
+	Source           SeasonInventorySource
+}
+
+// SeasonHolderListParams filters and pages a Season's holders.
+type SeasonHolderListParams struct {
+	// Q searches holder name, email, reference, order number or seat.
+	Q      string
+	Status string
+	Cursor string
+	Limit  int
+}
+
+// SeasonHolderExportParams filters the holders CSV export.
+type SeasonHolderExportParams struct {
+	// Q searches holder name, email, reference, order number or seat.
+	Q      string
+	Status string
+}
+
+// SeasonOrderDateCancelParams takes back one date of a Season order.
+type SeasonOrderDateCancelParams struct {
+	ActionID       string
+	IdempotencyKey string
+}
+
+// SeasonRenewalContactParams sets who a renewal offer is sent to. Use
+// FieldNull to clear a value.
+type SeasonRenewalContactParams struct {
+	Email NullableField[string]
+	Name  NullableField[string]
+}
+
+// SeasonRenewalNoticesParams limits renewal notices to some offers, at most
+// 20,000. Empty OfferIDs leaves the field out.
+type SeasonRenewalNoticesParams struct {
+	OfferIDs []string
+	// BatchID, instead of OfferIDs, emails every open offer one CreateRenewalOffers batch made (its batchId).
+	BatchID string
+}
+
+// SeasonOfferPageParams pages renewal offers, newest first. Cursor is the
+// nextCursor of the page before; empty reads the first page. Limit is the page
+// size, 1-100 for ListRenewalOffers and 1-500 for RetrieveHostedRenewals; zero
+// leaves it out for the default (100 and 500). A cursor the list did not give
+// out, or a limit out of range, answers 400 invalid_cursor or invalid_limit.
+type SeasonOfferPageParams struct {
+	Cursor string
+	Limit  int
+}
+
+func offerPageQuery(method string, options []SeasonOfferPageParams) (url.Values, error) {
+	if len(options) > 1 {
+		return nil, errors.New("seatlayer: " + method + " accepts at most one params value")
+	}
+	query := url.Values{}
+	if len(options) == 1 {
+		setIfNotEmpty(query, "cursor", options[0].Cursor)
+		if options[0].Limit > 0 {
+			query.Set("limit", strconv.Itoa(options[0].Limit))
+		}
+	}
+	return query, nil
+}
+
+// SeasonRenewalCheckoutParams starts a SeatLayer checkout that renews an
+// offer. ReturnURL is required and must be on one of the organization's
+// allowed domains; the buyer comes back there with seatlayer_checkout=success
+// or cancelled added. Empty optional fields are left out.
+type SeasonRenewalCheckoutParams struct {
+	ReturnURL string
+	// BuyerEmail is where the tickets go when no email is on file for the
+	// holder; the one on file wins.
+	BuyerEmail string
+	BuyerName  string
+	// Provider picks the connected gateway when the organization has more
+	// than one.
+	Provider       string
+	IdempotencyKey string
+}
+
+func (p SeasonRenewalCheckoutParams) body() map[string]any {
+	return params(
+		"returnUrl", p.ReturnURL,
+		"buyerEmail", stringOrNil(p.BuyerEmail),
+		"buyerName", stringOrNil(p.BuyerName),
+		"provider", stringOrNil(p.Provider),
+	)
+}
+
+// SeasonRenewalDeclineParams gives the holder's reason for declining, 1 to 200
+// characters, kept on the offer as declineReason. An empty Reason is left out.
+type SeasonRenewalDeclineParams struct {
+	Reason string
+}
+
+func (p SeasonRenewalDeclineParams) body() map[string]any {
+	return params("reason", stringOrNil(p.Reason))
+}
+
+// SeasonPerformanceRefundParams refunds every SeatLayer order holding a
+// cancelled date.
+type SeasonPerformanceRefundParams struct {
+	// Amount is "per_date": the date's share of each order, rounded down.
+	// "full" is refused (422 date_refund_per_date_only); refund a whole order
+	// with Orders.Refund.
+	Amount string
+	// Reason is kept on the job. Empty leaves it out.
+	Reason         string
+	IdempotencyKey string
+}
+
+// CreateHolderImportFromSeason dry-runs or commits renewal rights derived from
+// a previous Season's holders. A dry run answers 200 and a commit of 100
+// holders or fewer 201, both {"import": ...}. A commit of more than 100
+// holders answers 202 {"job": ...}: a holder_import job brings them across.
+// Follow it with RetrieveBulkJob; its summary has the same counts when it
+// completes. The same Idempotency-Key answers the same job. It can refuse with
+// 409 job_mismatch, or 503 job_busy or season_not_configured.
+func (s *SeasonsService) CreateHolderImportFromSeason(
+	ctx context.Context, seasonKey string, p SeasonHolderImportFromSeasonParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/imports/from-season"),
+		params(
+			"sourceSeasonId", p.SourceSeasonID,
+			"successorPlanActivationId", p.SuccessorPlanActivationID,
+			"dryRun", pointerOrNil(p.DryRun),
+		), p.IdempotencyKey)
+}
+
+// ListPerformances lists the Season's performances and package membership in
+// every lifecycle state.
+func (s *SeasonsService) ListPerformances(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/performances"), nil)
+}
+
+// CreatePerformances creates performances inside a draft Season from a repeat rule.
+func (s *SeasonsService) CreatePerformances(
+	ctx context.Context, seasonKey string, p SeasonPerformancesCreateParams,
+) (map[string]any, error) {
+	body := params(
+		"titlePattern", p.TitlePattern,
+		"firstStartsAt", int64OrNil(p.FirstStartsAt),
+		"timezone", p.Timezone,
+		"repeat", p.Repeat,
+		"count", intOrNil(p.Count),
+		"dates", seasonSliceOrNil(p.Dates),
+		"region", stringOrNil(string(p.Region)),
+		"attachToPlanKeys", seasonSliceOrNil(p.AttachToPlanKeys),
+	)
+	nullableFields(body,
+		fieldRequestValue("venue", p.Venue),
+		fieldRequestValue("durationMinutes", p.DurationMinutes),
+	)
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/performances"), body, p.IdempotencyKey)
+}
+
+// AttachPerformances attaches existing events to a draft Season and its packages.
+func (s *SeasonsService) AttachPerformances(
+	ctx context.Context, seasonKey string, p SeasonPerformancesAttachParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/performances/attach"),
+		params(
+			"eventKeys", p.EventKeys,
+			"attachToPlanKeys", seasonSliceOrNil(p.AttachToPlanKeys),
+		), p.IdempotencyKey)
+}
+
+// DeletePerformance removes a performance from a draft Season and every package.
+func (s *SeasonsService) DeletePerformance(
+	ctx context.Context, seasonKey, eventKey, idempotencyKey string,
+) (map[string]any, error) {
+	return s.client.mutationHeaderReplay(ctx, http.MethodDelete,
+		seasonPath(seasonKey, "/performances/"+escape(eventKey)), nil, idempotencyKey)
+}
+
+// UpdatePlan renames a draft package or changes the performances it covers.
+func (s *SeasonsService) UpdatePlan(
+	ctx context.Context, seasonKey, planKey string, p SeasonPlanUpdateParams,
+) (map[string]any, error) {
+	return s.client.mutationHeaderReplay(ctx, http.MethodPatch,
+		seasonPath(seasonKey, "/plans/"+escape(planKey)),
+		params("name", stringOrNil(p.Name), "eventKeys", seasonSliceOrNil(p.EventKeys)),
+		p.IdempotencyKey)
+}
+
+// DeletePlan deletes a draft package that is not the last one. The API answers
+// 204 with no body, so only an error comes back.
+func (s *SeasonsService) DeletePlan(
+	ctx context.Context, seasonKey, planKey, idempotencyKey string,
+) error {
+	_, err := s.client.mutationHeaderReplay(ctx, http.MethodDelete,
+		seasonPath(seasonKey, "/plans/"+escape(planKey)), nil, idempotencyKey)
+	return err
+}
+
+// Publish activates the Season structure and publishes every draft package in
+// one retryable call.
+func (s *SeasonsService) Publish(
+	ctx context.Context, seasonKey, idempotencyKey string,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/publish"), nil, idempotencyKey)
+}
+
+// CreateCheckoutTest runs a server-side hold and release to prove the Season
+// buyer path. Pass nil to send no body.
+func (s *SeasonsService) CreateCheckoutTest(
+	ctx context.Context, seasonKey string, p *SeasonCheckoutTestParams,
+) (map[string]any, error) {
+	var body any
+	idempotencyKey := ""
+	if p != nil {
+		body = params("planKey", stringOrNil(p.PlanKey), "quantity", intOrNil(p.Quantity))
+		idempotencyKey = p.IdempotencyKey
+	}
+	return s.client.postHeaderReplay(ctx, seasonPath(seasonKey, "/checkout-tests"), body, idempotencyKey)
+}
+
+// ListCheckoutTests lists recent Season checkout tests, newest first.
+func (s *SeasonsService) ListCheckoutTests(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/checkout-tests"), nil)
+}
+
+// ReplacePackagePrices replaces a package price table, per chart category, in
+// minor units.
+func (s *SeasonsService) ReplacePackagePrices(
+	ctx context.Context, seasonKey, planKey string, p SeasonPackagePricesParams,
+) (map[string]any, error) {
+	prices := p.Prices
+	if prices == nil {
+		// prices is required on the wire; an empty list clears them.
+		prices = []SeasonPackagePrice{}
+	}
+	return s.client.mutationHeaderReplay(ctx, http.MethodPut,
+		seasonPath(seasonKey, "/plans/"+escape(planKey)+"/prices"),
+		params("prices", prices, "currency", stringOrNil(p.Currency)), p.IdempotencyKey)
+}
+
+// ListPrices lists every package price table for the Season.
+func (s *SeasonsService) ListPrices(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/prices"), nil)
+}
+
+// AttachPlanPerformance adds a performance to a published package and extends
+// its allocations.
+func (s *SeasonsService) AttachPlanPerformance(
+	ctx context.Context, seasonKey, planKey, eventKey, idempotencyKey string,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/plans/"+escape(planKey)+"/performances"),
+		params("eventKey", eventKey), idempotencyKey)
+}
+
+// DeletePlanPerformance removes a performance from a published package and
+// releases its allocations.
+func (s *SeasonsService) DeletePlanPerformance(
+	ctx context.Context, seasonKey, planKey, eventKey, idempotencyKey string,
+) (map[string]any, error) {
+	return s.client.mutationHeaderReplay(ctx, http.MethodDelete,
+		seasonPath(seasonKey, "/plans/"+escape(planKey)+"/performances/"+escape(eventKey)),
+		nil, idempotencyKey)
+}
+
+// MarkPerformancePast marks a performance past so it stops blocking new Season sales.
+// A cancelled date answers 409 performance_cancelled.
+func (s *SeasonsService) MarkPerformancePast(
+	ctx context.Context, seasonKey, eventKey string, p SeasonMarkPastParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/performances/"+escape(eventKey)+"/past"),
+		params("force", boolOrNil(p.Force)), p.IdempotencyKey)
+}
+
+// ReturnOccurrenceInventory returns one Season occurrence allocation to
+// ordinary Event inventory. It is single-attempt; ActionID makes a repeat safe.
+func (s *SeasonsService) ReturnOccurrenceInventory(
+	ctx context.Context, seasonKey, eventKey string, p SeasonOccurrenceReturnParams,
+) (map[string]any, error) {
+	return s.client.post(ctx, seasonPath(seasonKey, "/occurrences/"+escape(eventKey)+"/returns"),
+		params(
+			"actionId", p.ActionID,
+			"bookingRef", p.BookingRef,
+			"planActivationId", p.PlanActivationID,
+			"labels", p.Labels,
+			"source", p.Source,
+		), "")
+}
+
+// ReclaimOccurrenceInventory reclaims returned occurrence inventory while it is
+// still free. It is single-attempt; ActionID makes a repeat safe.
+func (s *SeasonsService) ReclaimOccurrenceInventory(
+	ctx context.Context, seasonKey, eventKey string, p SeasonOccurrenceReclaimParams,
+) (map[string]any, error) {
+	return s.client.post(ctx, seasonPath(seasonKey, "/occurrences/"+escape(eventKey)+"/reclaims"),
+		params(
+			"actionId", p.ActionID,
+			"returnActionId", p.ReturnActionID,
+			"bookingRef", p.BookingRef,
+			"planActivationId", p.PlanActivationID,
+			"labels", p.Labels,
+			"source", p.Source,
+		), "")
+}
+
+// ListHolders lists Season ticket holders, one cursor page at a time.
+func (s *SeasonsService) ListHolders(
+	ctx context.Context, seasonKey string, p *SeasonHolderListParams,
+) (map[string]any, error) {
+	query := url.Values{}
+	if p != nil {
+		setIfNotEmpty(query, "q", p.Q)
+		setIfNotEmpty(query, "status", p.Status)
+		setIfNotEmpty(query, "cursor", p.Cursor)
+		if p.Limit > 0 {
+			query.Set("limit", strconv.Itoa(p.Limit))
+		}
+	}
+	return s.client.get(ctx, seasonPath(seasonKey, "/holders"), query)
+}
+
+// RefundOrder refunds a Season order in full or in part through its payment
+// provider. Pass nil to refund what is left.
+func (s *SeasonsService) RefundOrder(
+	ctx context.Context, seasonKey, orderID string, p *OrderRefundParams,
+) (map[string]any, error) {
+	body, idempotencyKey := p.request()
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/orders/"+escape(orderID)+"/refund"), body, idempotencyKey)
+}
+
+// CancelOrder cancels a Season order without moving money and releases every date.
+func (s *SeasonsService) CancelOrder(
+	ctx context.Context, seasonKey, orderID string, p OrderCancelParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/orders/"+escape(orderID)+"/cancel"), p.body(), p.IdempotencyKey)
+}
+
+// CancelOrderDate takes back one date of a Season order and puts its seats back
+// on sale. Pass nil to send no body.
+func (s *SeasonsService) CancelOrderDate(
+	ctx context.Context, seasonKey, orderID, eventKey string, p *SeasonOrderDateCancelParams,
+) (map[string]any, error) {
+	var body any
+	idempotencyKey := ""
+	if p != nil {
+		body = params("actionId", stringOrNil(p.ActionID))
+		idempotencyKey = p.IdempotencyKey
+	}
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/orders/"+escape(orderID)+"/dates/"+escape(eventKey)+"/cancel"),
+		body, idempotencyKey)
+}
+
+// ResendOrderTickets emails a Season order's tickets again. It has no replay
+// contract, so it is single-attempt. Pass nil to send no body.
+func (s *SeasonsService) ResendOrderTickets(
+	ctx context.Context, seasonKey, orderID string, p *OrderResendParams,
+) (map[string]any, error) {
+	return s.client.post(ctx,
+		seasonPath(seasonKey, "/orders/"+escape(orderID)+"/resend"), p.body(), "")
+}
+
+// RetrieveHostedRenewals reads renewal links, payments and emails for one page
+// of renewal offers, newest first; the answer's nextCursor reads the next page
+// and is null on the last. Pass one SeasonOfferPageParams to page (Limit 1-500,
+// default 500).
+func (s *SeasonsService) RetrieveHostedRenewals(
+	ctx context.Context, seasonKey string, options ...SeasonOfferPageParams,
+) (map[string]any, error) {
+	query, err := offerPageQuery("RetrieveHostedRenewals", options)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-hosted"), query)
+}
+
+// RotateRenewalOfferLink makes a new renewal link for one holder; the old link
+// stops working. The link is shown once, so this is deliberately single-attempt.
+func (s *SeasonsService) RotateRenewalOfferLink(
+	ctx context.Context, seasonKey, offerID string,
+) (map[string]any, error) {
+	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/link"), nil, "")
+}
+
+// UpdateRenewalOfferContact sets the name and email a renewal offer is sent to.
+// It is single-attempt.
+func (s *SeasonsService) UpdateRenewalOfferContact(
+	ctx context.Context, seasonKey, offerID string, p SeasonRenewalContactParams,
+) (map[string]any, error) {
+	body := nullableFields(map[string]any{},
+		fieldRequestValue("email", p.Email),
+		fieldRequestValue("name", p.Name),
+	)
+	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/contact"), body, "")
+}
+
+// CreateRenewalNotices emails renewal invitations now and reminders before the
+// deadline. It is single-attempt. Pass nil to send no body, which emails every
+// open offer. It takes up to 20,000 offer ids; more answers 422
+// too_many_offer_ids.
+func (s *SeasonsService) CreateRenewalNotices(
+	ctx context.Context, seasonKey string, p *SeasonRenewalNoticesParams,
+) (map[string]any, error) {
+	var body any
+	if p != nil {
+		body = params("offerIds", seasonSliceOrNil(p.OfferIDs), "batchId", stringOrNil(p.BatchID))
+	}
+	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-notices"), body, "")
+}
+
+// ResendRenewalOffer sends one holder a new renewal invitation. It has no
+// replay contract, so it is single-attempt.
+func (s *SeasonsService) ResendRenewalOffer(
+	ctx context.Context, seasonKey, offerID string,
+) (map[string]any, error) {
+	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/resend"), nil, "")
+}
+
+// RetrieveRenewalQuote reads what renewing an offer costs, priced as the
+// SeatLayer checkout will charge it. "problem" is null when SeatLayer checkout
+// can take the renewal now; otherwise it says why not.
+func (s *SeasonsService) RetrieveRenewalQuote(
+	ctx context.Context, seasonKey, offerID string,
+) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/quote"), nil)
+}
+
+// CreateRenewalIntent records that the holder means to renew, for a renewal
+// taken by phone or at the box office, so your own checkout can commit the
+// offer. A repeat answers the same offer. It is single-attempt.
+func (s *SeasonsService) CreateRenewalIntent(
+	ctx context.Context, seasonKey, offerID string,
+) (map[string]any, error) {
+	return s.client.post(ctx, seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/intent"), nil, "")
+}
+
+// CreateRenewalCheckout starts a SeatLayer checkout that renews an offer, with
+// no hosted page. Send the buyer to payment.url; paying renews the offer. A
+// repeat with the same Idempotency-Key answers the same order.
+func (s *SeasonsService) CreateRenewalCheckout(
+	ctx context.Context, seasonKey, offerID string, p SeasonRenewalCheckoutParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/renewal-offers/"+escape(offerID)+"/checkout"), p.body(), p.IdempotencyKey)
+}
+
+// RetrieveSalesReport reads Season money, seats, holders and renewals as totals.
+func (s *SeasonsService) RetrieveSalesReport(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/reports/sales"), nil)
+}
+
+// RetrieveSeatsReport reads the seats still free per package and per date.
+func (s *SeasonsService) RetrieveSeatsReport(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/reports/seats"), nil)
+}
+
+// ExportHoldersCSV downloads every Season ticket holder as CSV text with a
+// header row, returned unchanged.
+func (s *SeasonsService) ExportHoldersCSV(
+	ctx context.Context, seasonKey string, p *SeasonHolderExportParams,
+) (string, error) {
+	query := url.Values{}
+	if p != nil {
+		setIfNotEmpty(query, "q", p.Q)
+		setIfNotEmpty(query, "status", p.Status)
+	}
+	return s.client.getText(ctx, seasonPath(seasonKey, "/reports/holders.csv"), query, "text/csv")
+}
+
+// ExportOrdersCSV downloads every Season order SeatLayer took as CSV text with
+// a header row, returned unchanged.
+func (s *SeasonsService) ExportOrdersCSV(ctx context.Context, seasonKey string) (string, error) {
+	return s.client.getText(ctx, seasonPath(seasonKey, "/reports/orders.csv"), nil, "text/csv")
+}
+
+// RetrieveSeatCounts reads Season seats sold per package and per date.
+func (s *SeasonsService) RetrieveSeatCounts(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/seat-counts"), nil)
+}
+
+// RefundPerformance refunds every SeatLayer order holding a cancelled date, as
+// a job; the answer is {"job": ...}. Follow it with RetrieveBulkJob. It is
+// retried safely with one Idempotency-Key, which replays the same job.
+func (s *SeasonsService) RefundPerformance(
+	ctx context.Context, seasonKey, eventKey string, p SeasonPerformanceRefundParams,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/performances/"+escape(eventKey)+"/refunds"),
+		params("amount", p.Amount, "reason", stringOrNil(p.Reason)), p.IdempotencyKey)
+}
+
+// ReleaseLapsedOffers releases the seats of every lapsed renewal offer, as a
+// job; the answer is 202 {"job": ...}. An offer extended before its turn is
+// skipped and keeps its seat. Follow it with RetrieveBulkJob. It is retried
+// safely with one Idempotency-Key, which replays the same job; an empty
+// idempotencyKey generates one.
+func (s *SeasonsService) ReleaseLapsedOffers(
+	ctx context.Context, seasonKey, idempotencyKey string,
+) (map[string]any, error) {
+	return s.client.postHeaderReplay(ctx,
+		seasonPath(seasonKey, "/renewal-offers/release-lapsed"), nil, idempotencyKey)
+}
+
+// ListBulkJobs lists the Season's bulk jobs, newest first (100 at most).
+func (s *SeasonsService) ListBulkJobs(ctx context.Context, seasonKey string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/jobs"), nil)
+}
+
+// RetrieveBulkJob reads one bulk job with its counts and up to 500 failed items.
+// Its summary is what the job ended with, empty until it completes: for a
+// holder_import job the bring-across counts, for a renewal_run job batchId,
+// offered, skipped and failed.
+func (s *SeasonsService) RetrieveBulkJob(ctx context.Context, seasonKey, jobID string) (map[string]any, error) {
+	return s.client.get(ctx, seasonPath(seasonKey, "/jobs/"+escape(jobID)), nil)
 }

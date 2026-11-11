@@ -32,11 +32,11 @@ Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 S
 ## Install the Go seat booking SDK
 
 ```bash
-go get github.com/seatlayer/seatlayer-go@v0.8.0
+go get github.com/seatlayer/seatlayer-go@v0.9.0
 ```
 
 The module resolves straight from this repository through the Go module proxy, so there is no
-registry account to create; `v0.8.0` is the current release and the API reference is published on
+registry account to create; `v0.9.0` is the current release and the API reference is published on
 [pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go). Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies**: standard library
 only.
 

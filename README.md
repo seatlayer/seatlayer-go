@@ -395,8 +395,8 @@ feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mo
 
 Webhook methods expose the wire envelopes directly: `List` returns `WebhookList.Subs`, `Create`
 returns `WebhookCreateEnvelope` with the show-once `Secret`, and `Update` returns
-`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the 56 accepted event names and
-`WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
+`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for every event name this version accepts
+and `WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
 
 Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes. In Go
 specifically, `encoding/json` marshals map keys in sorted order while a real delivery arrives in

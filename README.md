@@ -580,12 +580,11 @@ not sold again.
 
 ### Can I use my own payment provider?
 
-Yes. This server SDK does not process payment in a Platform/SDK integration. Charge through the
-provider you already use, calculating the total from each server-inspected hold item's
-`UnitPrice`, `Quantity`, and `Currency`, then call `Inventory.Book` with your charge or order id as
-the `BookingRef`. Managed Ticketing is a separate product path with organizer-connected payments.
-The [holds and checkout guide](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) walks
-through the full handoff.
+Yes. Nothing in this SDK takes a payment: your server charges the hold's total through the provider
+you already use, then books the seats with your order id as `BookingRef`, and SeatLayer never
+touches the money. If you would rather SeatLayer run the checkout for an event
+(`Events.ReplaceBuyerCheckout`), buyers pay through one of 14 payment gateways, including Stripe,
+PayPal and Square, straight into your own account.
 
 ## Continue your Go integration
 

@@ -21,13 +21,13 @@ through one typed ticketing API client.
 > anything a ticket buyer can reach. Browser surfaces get short-lived, origin-bound tokens that
 > you mint here.
 
-Two-step shape: the buyer picks and holds seats in the client with your public key, then this SDK confirms the booking from your server with your secret key while your platform keeps checkout and its own payment provider.
+**How it works:** the buyer picks and holds seats in your website or app with your public key. Your server then reads the hold, takes the payment through your own provider, and books the seats with this SDK and your secret key.
 
-**Start here:** [Quickstart](https://docs.seatlayer.io/start/quickstart/) · [Holds and checkout](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) · [Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/) · [SDK catalog](https://docs.seatlayer.io/sdk-catalog.json) · [Pricing](https://seatlayer.io/pricing/): $0 entry, 100 free confirmed-sold-seat credits per organization each month, then $0.10 down to $0.05 a credit, and credits never expire.
+**Start here:** [Quickstart](https://docs.seatlayer.io/start/quickstart/) · [Holds and checkout](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) · [Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/) · [SDK catalog](https://docs.seatlayer.io/sdk-catalog.json) · [Pricing](https://seatlayer.io/pricing/): 100 sold seats free every month, then 10¢ down to 5¢ per sold seat. No subscription, and purchased credits never expire. Test mode is free.
 
 ## Scale evidence
 
-Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 September 2026: 200,000 seats chart-ready in 1.95 s, desktop, local production build. Fixtures, method and run logs: https://github.com/seatlayer/seatlayer-performance. Live 200,000-seat stadium demo: https://app.seatlayer.io/demo/play/century-stadium-200k. This is renderer evidence, not a concurrent-buyer claim.
+Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 September 2026: 200,000 seats chart-ready in 1.95 s, desktop, local production build. Tested at 10,000 simulated concurrent buyers on one 12,000-seat event (18 September 2026): engine-side hold latency p99 9 ms, zero server errors. Method, fixtures and run files: https://github.com/seatlayer/seatlayer-performance. Live 200,000-seat stadium demo: https://app.seatlayer.io/demo/play/century-stadium-200k.
 
 ## Install the Go seat booking SDK
 
@@ -36,7 +36,7 @@ go get github.com/seatlayer/seatlayer-go@v0.9.0
 ```
 
 The module resolves straight from this repository through the Go module proxy, so there is no
-registry account to create; `v0.9.0` is the current release and the API reference is published on
+registry account to create; the API reference is published on
 [pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go). Requires Go 1.23 or newer (for range-over-func iterators). **No dependencies**: standard library
 only.
 
@@ -114,23 +114,25 @@ treated as a transient fault to back off through.
 
 ## Fixed Renewable Seasons
 
-`client.Seasons` exposes 87 trusted organizer operations: the 48 added in `v0.7.0`, plus
-performances, package prices (per price type, with the `SeasonPriceType…` constants), one-call
-publishing, checkout tests, the holder list, Season order refunds and cancellations, hosted
-renewals, renewal quotes, intents and checkouts, sales and seat reports, CSV exports, and the bulk refund of a cancelled date
-(`RefundPerformance`) and release of lapsed offers (`ReleaseLapsedOffers`) with their jobs
-(`ListBulkJobs`, `RetrieveBulkJob`). Above 100 contracts `CreateRenewalOffers` answers `202` with a
-`renewal_run` job and its `batchId`, and above 100 holders `CreateHolderImportFromSeason` answers
-`202` with a `holder_import` job; follow either with `RetrieveBulkJob`. `ListRenewalOffers` and
-`RetrieveHostedRenewals` read one page at a time: pass `SeasonOfferPageParams{Cursor: nextCursor}`.
-`ExportHoldersCSV` and `ExportOrdersCSV` return the CSV text unchanged; `DeletePlan` answers
-`204` and returns only an error.
+`client.Seasons` has all 90 season operations: seasons and their packages, dates and package prices
+(per price type, with the `SeasonPriceType…` constants), sales windows, checkout tests, buyer
+sessions and booking, holder imports and the holder list, season orders, renewals (offers, quotes,
+intents, checkouts and hosted renewal links), date changes and cancellations, season seats, bulk
+refunds with their jobs, sales and seat reports, CSV exports, audit and support export. The bulk
+refund of a cancelled date is `RefundPerformance`, the release of lapsed offers is
+`ReleaseLapsedOffers`, and their jobs are read with `ListBulkJobs` and `RetrieveBulkJob`. Above 100
+contracts `CreateRenewalOffers` answers `202` with a `renewal_run` job and its `batchId`, and above
+100 holders `CreateHolderImportFromSeason` answers `202` with a `holder_import` job; follow either
+with `RetrieveBulkJob`. `ListRenewalOffers` and `RetrieveHostedRenewals` read one page at a time:
+pass `SeasonOfferPageParams{Cursor: nextCursor}`. `ExportHoldersCSV` and `ExportOrdersCSV` return
+the CSV text unchanged; `DeletePlan` answers `204` and returns only an error.
 
-After the test hold/book/cancel journey and matching webhook deliveries,
-`client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)` sends no evidence body;
-SeatLayer discovers the retained chain automatically. Retrieved Season holds
-contain inventory identity, not an authoritative amount. Your platform owns
-package price, payment, order, tax, refunds, benefits, and ticket or pass delivery.
+Before you open sales, run one test hold, booking and cancellation with their
+webhooks, then call `client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)`. It
+finds those test records itself, so it takes no body. With your own checkout, until a test like this or a checkout test has passed, opening sales answers with a `checkout_test_missing`
+warning. A season hold lists each date's seat, category and quantity but no price:
+when you run your own checkout, you set the package price and take the payment,
+and you issue the tickets.
 
 ```go
 checked, err := client.Seasons.Validate(ctx, seatlayer.SeasonSelectionParams{
@@ -143,10 +145,11 @@ created, err := client.Seasons.Create(ctx, seatlayer.SeasonCreateParams{
 })
 ```
 
-Treat `202` as accepted work and poll `RetrieveLifecycle` with the returned
-operation identity. Buyer-session minting and domain-exact booking,
-cancellation, and renewal actions remain single-attempt; only declared
-header-replay catalogue mutations retry automatically.
+A `202` answer means the work was accepted and is still running: keep the returned
+operation id and poll `RetrieveLifecycle` until it finishes. Bookings,
+cancellations and renewal commits are sent once and never retried by the SDK, so
+give each one your own stable id; sending the same id again is safe. A buyer session is sent once too, and repeating it is not safe: if its answer is lost, revoke
+what was created and create one new session.
 
 When SeatLayer takes the Season's payments, renew a holder with no hosted page: read the price,
 start a checkout, and send the holder to `payment.url`. For a renewal taken by phone or at the box
@@ -383,9 +386,11 @@ session, err := client.Sessions.CreateManageSession(ctx, eventKey, seatlayer.Man
 
 `Capabilities` is **required** by this SDK even though the raw API safely defaults an omitted list
 to view-only (`event:view`). Keeping the field required makes browser authority visible at every
-call site. Grant the smallest set the page needs. For Platform/SDK events, `event:cancel` returns a
-booking's inventory to sale but does not move gateway money. The Managed commerce constants cover
-eligible Managed Ticketing orders, refunds, ticket delivery, door, and box-office capabilities.
+call site. Grant the smallest set the page needs. `event:cancel` puts a booking back on sale; it
+does not refund anyone. These six constants (`CapabilityOrdersRead`, `CapabilityRefund`,
+`CapabilityTicketsSend`, `CapabilityDoorView`, `CapabilityDoorCheckin`, `CapabilityBoxOffice`)
+cover events sold through SeatLayer's checkout: their orders, refunds, ticket sending, door
+check-in and box office.
 
 Designer minting returns a `DesignerSessionEnvelope`; the token and the effective safe-mode and
 feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mode: "safe"`.
@@ -394,8 +399,8 @@ feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mo
 
 Webhook methods expose the wire envelopes directly: `List` returns `WebhookList.Subs`, `Create`
 returns `WebhookCreateEnvelope` with the show-once `Secret`, and `Update` returns
-`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for the 56 accepted event names and
-`WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
+`WebhookEnvelope.Sub`. Use the `WebhookEvent…` constants for every event name this version accepts
+and `WebhookDeliveryListParams` for `limit`, `status`, and `before` filters.
 
 Verify every delivery against the **raw** body. Decoding and re-encoding changes the bytes. In Go
 specifically, `encoding/json` marshals map keys in sorted order while a real delivery arrives in
@@ -538,7 +543,7 @@ return the CSV text as a `string`.
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |
 | `Workspaces` | `List` `Create` `Retrieve` `Update` |
 | `PerformanceGroups` | `List` `Create` `Retrieve` `Delete` `Activate` `Close` `RetrieveLifecycle` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `RetrieveHold` `BookHold` `RetrieveBooking` |
-| `Seasons` | 87 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds, lapsed-offer releases and their jobs, reports and CSV exports, audit, outbox, and support export |
+| `Seasons` | 90 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds, lapsed-offer releases and their jobs, reports and CSV exports, audit, outbox, and support export |
 
 Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
 
@@ -573,12 +578,11 @@ not sold again.
 
 ### Can I use my own payment provider?
 
-Yes. This server SDK does not process payment in a Platform/SDK integration. Charge through the
-provider you already use, calculating the total from each server-inspected hold item's
-`UnitPrice`, `Quantity`, and `Currency`, then call `Inventory.Book` with your charge or order id as
-the `BookingRef`. Managed Ticketing is a separate product path with organizer-connected payments.
-The [holds and checkout guide](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) walks
-through the full handoff.
+Yes. Nothing in this SDK takes a payment: your server charges the hold's total through the provider
+you already use, then books the seats with your order id as `BookingRef`, and SeatLayer never
+touches the money. If you would rather SeatLayer run the checkout for an event
+(`Events.ReplaceBuyerCheckout`), buyers pay through one of 14 payment gateways, including Stripe,
+PayPal and Square, straight into your own account.
 
 ## Continue your Go integration
 

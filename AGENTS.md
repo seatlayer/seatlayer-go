@@ -7,9 +7,9 @@ be usable from a browser.
 
 - **No dependencies.** Standard library only: `net/http`, `encoding/json`, `crypto/hmac`. Keep it that way —
   a server SDK that drags in a dependency tree is a supply-chain surface for every customer.
-- **The public surface is defined upstream** by `workers/api/src/publicApi.ts` in the app repo.
+- **The public surface is the SeatLayer server API**: [reference](https://docs.seatlayer.io/server-api/) and [OpenAPI document](https://docs.seatlayer.io/openapi.json).
   A method here must map to an operation listed there. Do not wrap internal routes.
-- **Method names are the operationIds** from that manifest, exported in Go style. Renaming one is
+- **Method names are the operationIds** in that OpenAPI document, exported in Go style. Renaming one is
   a breaking change across every SeatLayer server SDK, not just this package.
 - **Go idioms win over cross-SDK symmetry** where they conflict: errors are values checked with
   `errors.As`, every call takes a `context.Context`, options are structs rather than long argument

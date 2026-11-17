@@ -388,9 +388,11 @@ session, err := client.Sessions.CreateManageSession(ctx, eventKey, seatlayer.Man
 
 `Capabilities` is **required** by this SDK even though the raw API safely defaults an omitted list
 to view-only (`event:view`). Keeping the field required makes browser authority visible at every
-call site. Grant the smallest set the page needs. For Platform/SDK events, `event:cancel` returns a
-booking's inventory to sale but does not move gateway money. The Managed commerce constants cover
-eligible Managed Ticketing orders, refunds, ticket delivery, door, and box-office capabilities.
+call site. Grant the smallest set the page needs. `event:cancel` puts a booking back on sale; it
+does not refund anyone. The other constants (`CapabilityOrdersRead`, `CapabilityRefund`,
+`CapabilityTicketsSend`, `CapabilityDoorView`, `CapabilityDoorCheckin`, `CapabilityBoxOffice`)
+cover events sold through SeatLayer's checkout: their orders, refunds, ticket sending, door
+check-in and box office.
 
 Designer minting returns a `DesignerSessionEnvelope`; the token and the effective safe-mode and
 feature policy live under `result.Session`. Pass `SafeModeOptions` only with `Mode: "safe"`.

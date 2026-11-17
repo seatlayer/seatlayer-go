@@ -114,17 +114,18 @@ treated as a transient fault to back off through.
 
 ## Fixed Renewable Seasons
 
-`client.Seasons` exposes 87 trusted organizer operations: the 48 added in `v0.7.0`, plus
-performances, package prices (per price type, with the `SeasonPriceType…` constants), one-call
-publishing, checkout tests, the holder list, Season order refunds and cancellations, hosted
-renewals, renewal quotes, intents and checkouts, sales and seat reports, CSV exports, and the bulk refund of a cancelled date
-(`RefundPerformance`) and release of lapsed offers (`ReleaseLapsedOffers`) with their jobs
-(`ListBulkJobs`, `RetrieveBulkJob`). Above 100 contracts `CreateRenewalOffers` answers `202` with a
-`renewal_run` job and its `batchId`, and above 100 holders `CreateHolderImportFromSeason` answers
-`202` with a `holder_import` job; follow either with `RetrieveBulkJob`. `ListRenewalOffers` and
-`RetrieveHostedRenewals` read one page at a time: pass `SeasonOfferPageParams{Cursor: nextCursor}`.
-`ExportHoldersCSV` and `ExportOrdersCSV` return the CSV text unchanged; `DeletePlan` answers
-`204` and returns only an error.
+`client.Seasons` has all 90 season operations: seasons and their packages, dates and package prices
+(per price type, with the `SeasonPriceType…` constants), sales windows, checkout tests, buyer
+sessions and booking, holder imports and the holder list, season orders, renewals (offers, quotes,
+intents, checkouts and hosted renewal links), date changes and cancellations, season seats, bulk
+refunds with their jobs, sales and seat reports, CSV exports, audit and support export. The bulk
+refund of a cancelled date is `RefundPerformance`, the release of lapsed offers is
+`ReleaseLapsedOffers`, and their jobs are read with `ListBulkJobs` and `RetrieveBulkJob`. Above 100
+contracts `CreateRenewalOffers` answers `202` with a `renewal_run` job and its `batchId`, and above
+100 holders `CreateHolderImportFromSeason` answers `202` with a `holder_import` job; follow either
+with `RetrieveBulkJob`. `ListRenewalOffers` and `RetrieveHostedRenewals` read one page at a time:
+pass `SeasonOfferPageParams{Cursor: nextCursor}`. `ExportHoldersCSV` and `ExportOrdersCSV` return
+the CSV text unchanged; `DeletePlan` answers `204` and returns only an error.
 
 After the test hold/book/cancel journey and matching webhook deliveries,
 `client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)` sends no evidence body;
@@ -538,7 +539,7 @@ return the CSV text as a `string`.
 | `Webhooks` | `List` `Create` `Update` `Delete` `ListDeliveries` |
 | `Workspaces` | `List` `Create` `Retrieve` `Update` |
 | `PerformanceGroups` | `List` `Create` `Retrieve` `Delete` `Activate` `Close` `RetrieveLifecycle` `CreateBuyerAccessSession` `ListBuyerAccessSessions` `RevokeBuyerAccessSession` `RetrieveHold` `BookHold` `RetrieveBooking` |
-| `Seasons` | 87 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds, lapsed-offer releases and their jobs, reports and CSV exports, audit, outbox, and support export |
+| `Seasons` | 90 operations for catalogue and Plan lifecycle, performances, package prices, publishing, checkout tests, sales windows, buyer access and booking, holder imports and the holder list, Season orders, renewals, hosted renewals and renewal checkouts, occurrence amendments and inventory returns, bulk refunds, lapsed-offer releases and their jobs, reports and CSV exports, audit, outbox, and support export |
 
 Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/)
 

@@ -27,7 +27,7 @@ through one typed ticketing API client.
 
 ## Scale evidence
 
-Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 September 2026: 200,000 seats chart-ready in 1.95 s, desktop, local production build. Tested at 10,000 concurrent buyers on one event: seat hold p99 9 ms, zero server errors. Method, fixtures and raw runs: https://github.com/seatlayer/seatlayer-performance. Live 200,000-seat stadium demo: https://app.seatlayer.io/demo/play/century-stadium-200k.
+Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 September 2026: 200,000 seats chart-ready in 1.95 s, desktop, local production build. Tested at 10,000 simulated concurrent buyers on one 12,000-seat event (18 September 2026): engine-side hold latency p99 9 ms, zero server errors. Method, fixtures and run files: https://github.com/seatlayer/seatlayer-performance. Live 200,000-seat stadium demo: https://app.seatlayer.io/demo/play/century-stadium-200k.
 
 ## Install the Go seat booking SDK
 
@@ -129,8 +129,7 @@ the CSV text unchanged; `DeletePlan` answers `204` and returns only an error.
 
 Before you open sales, run one test hold, booking and cancellation with their
 webhooks, then call `client.Seasons.ValidateBuyerRehearsal(ctx, seasonKey)`. It
-finds those test records itself, so it takes no body. Until a test like this or a
-checkout test has passed, opening sales answers with a `checkout_test_missing`
+finds those test records itself, so it takes no body. With your own checkout, until a test like this or a checkout test has passed, opening sales answers with a `checkout_test_missing`
 warning. A season hold lists each date's seat, category and quantity but no price:
 when you run your own checkout, you set the package price and take the payment,
 and you issue the tickets.
@@ -149,8 +148,7 @@ created, err := client.Seasons.Create(ctx, seatlayer.SeasonCreateParams{
 A `202` answer means the work was accepted and is still running: keep the returned
 operation id and poll `RetrieveLifecycle` until it finishes. Bookings,
 cancellations and renewal commits are sent once and never retried by the SDK, so
-give each one your own stable id; sending the same id again is safe. A buyer
-session is sent once too, but it cannot be repeated: if its answer is lost, revoke
+give each one your own stable id; sending the same id again is safe. A buyer session is sent once too, and repeating it is not safe: if its answer is lost, revoke
 what was created and create one new session.
 
 When SeatLayer takes the Season's payments, renew a holder with no hosted page: read the price,
@@ -389,7 +387,7 @@ session, err := client.Sessions.CreateManageSession(ctx, eventKey, seatlayer.Man
 `Capabilities` is **required** by this SDK even though the raw API safely defaults an omitted list
 to view-only (`event:view`). Keeping the field required makes browser authority visible at every
 call site. Grant the smallest set the page needs. `event:cancel` puts a booking back on sale; it
-does not refund anyone. The other constants (`CapabilityOrdersRead`, `CapabilityRefund`,
+does not refund anyone. These six constants (`CapabilityOrdersRead`, `CapabilityRefund`,
 `CapabilityTicketsSend`, `CapabilityDoorView`, `CapabilityDoorCheckin`, `CapabilityBoxOffice`)
 cover events sold through SeatLayer's checkout: their orders, refunds, ticket sending, door
 check-in and box office.

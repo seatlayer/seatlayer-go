@@ -480,7 +480,7 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Forty-one mutations use exact header replay:
+`Retry-After` wins when the server sends it. Forty-three mutations use exact header replay:
 `Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
 `Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
 `Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.UpdatePlan`, `Seasons.DeletePlan`,
@@ -490,11 +490,11 @@ requests.
 `Seasons.MarkPerformancePast`, `Seasons.CreateCheckoutTest`, `Seasons.ReplacePackagePrices`,
 `Seasons.AttachPlanPerformance`, `Seasons.DeletePlanPerformance`, `Seasons.RefundOrder`,
 `Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Seasons.RefundPerformance`,
-`Seasons.ReleaseLapsedOffers`, `Seasons.CreateRenewalCheckout`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
+`Seasons.ReleaseLapsedOffers`, `Seasons.CreateRenewalCheckout`, `Seasons.SetAsideBlock`, `Seasons.ReleaseBlock`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
 `Holders.CreateRenewalCheckout`, `Orders.RefundEventOrder`,
 `Orders.CancelEventOrder`, `EventSeries.Create`, `EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
 
-**Idempotency.** Those 41 replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those 43 replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
 have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
 includes inventory holds and bookings, show-once credential or secret creation, unsupported
@@ -577,20 +577,20 @@ free.
 
 Create a client with your secret key, read the buyer's hold with `Inventory.RetrieveHold` to get the
 real seats and prices, take the payment, then call `client.Inventory.Book` with
-`seatlayer.BookParams{HoldID, BookingRef}`, using your own order id as `BookingRef`. For phone
-orders, the box office and comps, `Inventory.BookBestAvailable` picks and books the best seats in
+`seatlayer.BookParams{HoldID: holdID, BookingRef: orderID}`, using your own order id as `BookingRef`. For phone
+orders, the box office and comps, `Inventory.BookBestAvailable` picks and books the best available seats in
 one call, with no browser involved. Keep that `BookingRef` for the order: it finds the booking again
 in `Inventory.ListBookings` and cancels it with `Inventory.Unbook`.
 
 ### How do I stop two buyers taking the same seat?
 
-In the SeatLayer picker, a buyer's seats are held when they go to checkout; with the bare chart,
-your code calls hold. The hold keeps those seats for that buyer for a set time, which you can change
-per event, and every other buyer sees them taken at once. Your server reads the hold with
+In the SeatLayer picker, a buyer's seats are held when they go to checkout; with the headless `SeatingChart`, your page calls `hold()`. The hold keeps those seats for that buyer for a set time, which you can change
+per event, and every other buyer sees them taken. Your server reads the hold with
 `Inventory.RetrieveHold`, charges from the prices it returns rather than anything the browser sent,
 and books it; `Inventory.ExtendHold` gives a slow checkout more time without letting the seats go.
-If a booking call times out, send it again with the same hold and the same `BookingRef`: seats
-already booked under that reference are never sold twice.
+If a booking call times out, check `Inventory.ListBookings` for that `BookingRef`, or repeat the exact same
+booking with the same hold and `BookingRef`: seats already booked under it are not sold again,
+though the repeat can return an empty booked list.
 
 ### Can I use my own payment provider?
 

@@ -554,32 +554,43 @@ Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server
 
 ## Frequently asked questions
 
+### What does the SeatLayer API do for a ticketing platform?
+
+SeatLayer gives your Go backend one API for seating charts, live seat holds, booking, box office
+sales and season tickets, with official SDKs in Node.js, Python, PHP, Java, Go, Ruby and .NET.
+Buyers pick seats on the same SeatLayer map on the web, iOS, Android, Flutter and React Native, and
+your server books what they hold with your own order id, so a retried booking never sells a seat
+twice. You pay only for sold seats: 100 a month are free, then 10¢ down to 5¢ a seat, with no
+subscription, and holds and test mode cost nothing. Its measured results are under Scale evidence
+below.
+
+### How much does the SeatLayer API cost?
+
+Building and testing is free: test mode has no time limit, needs no card and uses no credits. Live,
+with your own checkout, you pay one credit per confirmed sold seat: the first 100 sold seats each
+month are free, then 10¢ down to 5¢ a seat, with no subscription, and purchased credits never
+expire. Designing charts, showing the map, holds and releases never use a credit. An event that
+sells through SeatLayer's checkout costs $0.50 per ticket instead, and your first 25 tickets are
+free.
+
 ### How do I book seats from Go?
 
-Add the [`github.com/seatlayer/seatlayer-go` module](https://pkg.go.dev/github.com/seatlayer/seatlayer-go),
-construct a client with `seatlayer.New` and your secret key, and call `client.Inventory.Book` with
-the hold id and a stable `BookingRef`. When your own backend picks the seats (phone orders, box
-office, comps), `Inventory.BookBestAvailable` and `Inventory.BoxOfficeBook` book outright with no
-prior hold. A booking reference is required on every booking call, so each sale is tied to an
-immutable order id you can reconcile against later.
+Create a client with your secret key, read the buyer's hold with `Inventory.RetrieveHold` to get the
+real seats and prices, take the payment, then call `client.Inventory.Book` with
+`seatlayer.BookParams{HoldID, BookingRef}`, using your own order id as `BookingRef`. For phone
+orders, the box office and comps, `Inventory.BookBestAvailable` picks and books the best seats in
+one call, with no browser involved. Keep that `BookingRef` for the order: it finds the booking again
+in `Inventory.ListBookings` and cancels it with `Inventory.Unbook`.
 
-### What does the server SDK do that the buyer SDK does not?
+### How do I stop two buyers taking the same seat?
 
-The buyer SDK runs in the browser or mobile app and only **selects and holds** seats. This Go SDK
-runs on your trusted server and **inspects and books** them. Your secret key never reaches a buyer
-surface: browsers receive short-lived, origin-bound tokens minted here through
-`Sessions.CreateManageSession` or `Channels.CreateBuyerAccessSession`. Always price a sale from
-`Inventory.RetrieveHold`, never from values the browser sent you.
-
-### How do temporary seat holds work server-side?
-
-A hold reserves seats against concurrent buyers for a limited checkout window. From Go you
-retrieve it with `Inventory.RetrieveHold`, whose item-level price, quantity, and currency are
-authoritative, and confirm it with `Inventory.Book`. Use `Inventory.ExtendHold` for a long checkout
-instead of releasing and re-holding, which would hand the seats to whoever is racing for them.
-Booking is a single automatic attempt: after an unknown network outcome you may reconcile and
-repeat the exact same event, hold, and `BookingRef`; seats already booked under that reference are
-not sold again.
+In the SeatLayer picker, a buyer's seats are held when they go to checkout; with the bare chart,
+your code calls hold. The hold keeps those seats for that buyer for a set time, which you can change
+per event, and every other buyer sees them taken at once. Your server reads the hold with
+`Inventory.RetrieveHold`, charges from the prices it returns rather than anything the browser sent,
+and books it; `Inventory.ExtendHold` gives a slow checkout more time without letting the seats go.
+If a booking call times out, send it again with the same hold and the same `BookingRef`: seats
+already booked under that reference are never sold twice.
 
 ### Can I use my own payment provider?
 
@@ -588,6 +599,22 @@ you already use, then books the seats with your order id as `BookingRef`, and Se
 touches the money. If you would rather SeatLayer run the checkout for an event
 (`Events.ReplaceBuyerCheckout`), buyers pay through one of 14 payment gateways, including Stripe,
 PayPal and Square, straight into your own account.
+
+### How do I sell season tickets and renewals through an API?
+
+The season API is in this SDK: `client.Seasons` has all 90 season operations. You create a season
+from its dates with `Seasons.Create`, the buyer chooses one seat in the browser `SeasonPicker` and
+the season hold takes it on every date at once, and your server books it with `Seasons.BookHold`;
+for the next season, `Seasons.CreateRenewalOffers` offers each holder the same seat.
+`Seasons.SetAsideBlock` sets season seats aside on every date before sales open, and with your own
+checkout each season seat uses one SDK credit per date, like any other sold seat.
+
+### How do I use the Go SDK in a net/http server?
+
+Create one client with `seatlayer.New` at start-up and share it: `Client` is safe for concurrent
+use. Pass each request's `r.Context()` to every call, so a cancelled request stops retries at once.
+For webhooks, read the raw body with `io.ReadAll(r.Body)` and pass it to `seatlayer.VerifyWebhook`
+before any JSON decoding, because decoding and re-encoding changes the bytes.
 
 ## Continue your Go integration
 

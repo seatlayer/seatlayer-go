@@ -1,15 +1,13 @@
-# SeatLayer Go Server SDK for Reserved Seating
+# SeatLayer Go SDK: seat booking, reserved seating and season ticket API
 
 [![CI](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml/badge.svg)](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/seatlayer/seatlayer-go.svg)](https://pkg.go.dev/github.com/seatlayer/seatlayer-go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827.svg)](LICENSE)
 
-The official Go client for the SeatLayer API. This module lets a Go backend inspect seat holds, price orders from server data, book reserved seats and verify webhooks, with no dependencies beyond the standard library. SeatLayer is seating chart and reserved-seat ticketing software built for venues up to stadium scale.
-
-SeatLayer's official Go server SDK is the **trusted side** of its reserved seating and seat
-booking API: inspect the holds a buyer created, price from server data, and book with a stable
-`BookingRef`. From Go you manage seating charts, events, sales channels, and live seat inventory
-through one typed ticketing API client.
+SeatLayer's official Go module books reserved seats from a plain net/http handler: every call takes
+a `context.Context`, errors are values you match with `errors.As`, and long lists come back as
+range-over-func iterators. It covers holds, bookings, box office sales, season tickets and webhook
+verification with the standard library only, on Go 1.23 and newer.
 
 [SeatLayer module on pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) ·
 [Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/) ·

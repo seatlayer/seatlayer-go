@@ -1,15 +1,24 @@
-# SeatLayer Go Server SDK for Reserved Seating
+# SeatLayer Go SDK: seat booking, reserved seating and season ticket API
 
 [![CI](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml/badge.svg)](https://github.com/seatlayer/seatlayer-go/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/seatlayer/seatlayer-go.svg)](https://pkg.go.dev/github.com/seatlayer/seatlayer-go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827.svg)](LICENSE)
 
-The official Go client for the SeatLayer API. This module lets a Go backend inspect seat holds, price orders from server data, book reserved seats and verify webhooks, with no dependencies beyond the standard library. SeatLayer is seating chart and reserved-seat ticketing software built for venues up to stadium scale.
+SeatLayer's official Go module books reserved seats from a plain net/http handler: every call takes
+a `context.Context`, errors are values you match with `errors.As`, and long lists come back as
+range-over-func iterators. It covers holds, bookings, box office sales, season tickets and webhook
+verification with the standard library only, on Go 1.23 and newer.
 
-SeatLayer's official Go server SDK is the **trusted side** of its reserved seating and seat
-booking API: inspect the holds a buyer created, price from server data, and book with a stable
-`BookingRef`. From Go you manage seating charts, events, sales channels, and live seat inventory
-through one typed ticketing API client.
+## What SeatLayer is
+
+SeatLayer is reserved-seat ticketing and seating software: organizers sell with hosted checkout,
+a box office, door check-in and season tickets, and platforms add the same seat maps, with 3D
+seat views, through the SeatLayer SDK and API. One chart drives the 2D map, the 3D venue and the
+view from each seat (3D for venues up to 60,000 seats; the 2D map benchmarked at 200,000 seats).
+
+[Website](https://seatlayer.io/) · [For developers](https://seatlayer.io/developers/) ·
+[Season tickets](https://seatlayer.io/season-tickets/) · [Pricing](https://seatlayer.io/pricing/) ·
+[Live demo](https://seatlayer.io/demo/)
 
 [SeatLayer module on pkg.go.dev](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) ·
 [Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/) ·
@@ -24,10 +33,6 @@ through one typed ticketing API client.
 **How it works:** the buyer picks and holds seats in your website or app with your public key. Your server then reads the hold, takes the payment through your own provider, and books the seats with this SDK and your secret key.
 
 **Start here:** [Quickstart](https://docs.seatlayer.io/start/quickstart/) · [Holds and checkout](https://docs.seatlayer.io/buyer-sdk/holds-and-checkout/) · [Go server SDK guide](https://docs.seatlayer.io/server-sdk/go/) · [SDK catalog](https://docs.seatlayer.io/sdk-catalog.json) · [Pricing](https://seatlayer.io/pricing/): 100 sold seats free every month, then 10¢ down to 5¢ per sold seat. No subscription, and purchased credits never expire. Test mode is free.
-
-## Scale evidence
-
-Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 September 2026: 200,000 seats chart-ready in 1.95 s, desktop, local production build. Tested at 10,000 simulated concurrent buyers on one 12,000-seat event (18 September 2026): engine-side hold latency p99 9 ms, zero server errors. Method, fixtures and run files: https://github.com/seatlayer/seatlayer-performance. Live 200,000-seat stadium demo: https://app.seatlayer.io/demo/play/century-stadium-200k.
 
 ## Install the Go seat booking SDK
 
@@ -112,7 +117,7 @@ the `Nullable` overlay when the wire call must contain an explicit JSON null, fo
 Every method takes a `context.Context`. Cancelling it stops retries immediately rather than being
 treated as a transient fault to back off through.
 
-## Fixed Renewable Seasons
+## Season tickets (Fixed Renewable Seasons)
 
 `client.Seasons` has all 90 season operations: seasons and their packages, dates and package prices
 (per price type, with the `SeasonPriceType…` constants), sales windows, checkout tests, buyer
@@ -475,7 +480,7 @@ requests.
 ## Reliability
 
 **Retries.** Reads (`GET`/`HEAD`) retry 429, 408 and 5xx with exponential backoff and full jitter;
-`Retry-After` wins when the server sends it. Forty-one mutations use exact header replay:
+`Retry-After` wins when the server sends it. Forty-three mutations use exact header replay:
 `Charts.Create`, `Charts.Copy`, `Templates.InstantiateTemplate`, `Events.Create`,
 `Workspaces.Create`, `PerformanceGroups.Create`, `Seasons.Create`, `Seasons.Update`,
 `Seasons.Delete`, `Seasons.CreatePlan`, `Seasons.UpdatePlan`, `Seasons.DeletePlan`,
@@ -485,11 +490,11 @@ requests.
 `Seasons.MarkPerformancePast`, `Seasons.CreateCheckoutTest`, `Seasons.ReplacePackagePrices`,
 `Seasons.AttachPlanPerformance`, `Seasons.DeletePlanPerformance`, `Seasons.RefundOrder`,
 `Seasons.CancelOrder`, `Seasons.CancelOrderDate`, `Seasons.RefundPerformance`,
-`Seasons.ReleaseLapsedOffers`, `Seasons.CreateRenewalCheckout`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
+`Seasons.ReleaseLapsedOffers`, `Seasons.CreateRenewalCheckout`, `Seasons.SetAsideBlock`, `Seasons.ReleaseBlock`, `Holders.Update`, `Holders.CreateTransfer`, `Holders.CreateReturn`,
 `Holders.CreateRenewalCheckout`, `Orders.RefundEventOrder`,
 `Orders.CancelEventOrder`, `EventSeries.Create`, `EventSeries.AddDates`, and `EventSeries.Update`. Other 4xx responses are never retried.
 
-**Idempotency.** Those 41 replay-backed operations carry an `Idempotency-Key`, generated when you
+**Idempotency.** Those 43 replay-backed operations carry an `Idempotency-Key`, generated when you
 do not supply one and reused across attempts. All remaining SDK mutations are single-attempt. Some
 have a server-side domain idempotency contract, but the SDK does not retry them automatically. This
 includes inventory holds and bookings, show-once credential or secret creation, unsupported
@@ -549,32 +554,43 @@ Full reference: [SeatLayer Go server SDK guide](https://docs.seatlayer.io/server
 
 ## Frequently asked questions
 
+### What does the SeatLayer API do for a ticketing platform?
+
+SeatLayer gives your Go backend one API for seating charts, live seat holds, booking, box office
+sales and season tickets, with official SDKs in Node.js, Python, PHP, Java, Go, Ruby and .NET.
+Buyers pick seats on the same SeatLayer map on the web, iOS, Android, Flutter and React Native, and
+your server books what they hold with your own order id, so a retried booking never sells a seat
+twice. You pay only for sold seats: 100 a month are free, then 10¢ down to 5¢ a seat, with no
+subscription, and holds and test mode cost nothing. Its measured results are under Scale evidence
+below.
+
+### How much does the SeatLayer API cost?
+
+Building and testing is free: test mode has no time limit, needs no card and uses no credits. Live,
+with your own checkout, you pay one credit per confirmed sold seat: the first 100 sold seats each
+month are free, then 10¢ down to 5¢ a seat, with no subscription, and purchased credits never
+expire. Designing charts, showing the map, holds and releases never use a credit. An event that
+sells through SeatLayer's checkout costs $0.50 per ticket instead, and your first 25 tickets are
+free.
+
 ### How do I book seats from Go?
 
-Add the [`github.com/seatlayer/seatlayer-go` module](https://pkg.go.dev/github.com/seatlayer/seatlayer-go),
-construct a client with `seatlayer.New` and your secret key, and call `client.Inventory.Book` with
-the hold id and a stable `BookingRef`. When your own backend picks the seats (phone orders, box
-office, comps), `Inventory.BookBestAvailable` and `Inventory.BoxOfficeBook` book outright with no
-prior hold. A booking reference is required on every booking call, so each sale is tied to an
-immutable order id you can reconcile against later.
+Create a client with your secret key, read the buyer's hold with `Inventory.RetrieveHold` to get the
+real seats and prices, take the payment, then call `client.Inventory.Book` with
+`seatlayer.BookParams{HoldID: holdID, BookingRef: orderID}`, using your own order id as `BookingRef`. For phone
+orders, the box office and comps, `Inventory.BookBestAvailable` picks and books the best available seats in
+one call, with no browser involved. Keep that `BookingRef` for the order: it finds the booking again
+in `Inventory.ListBookings` and cancels it with `Inventory.Unbook`.
 
-### What does the server SDK do that the buyer SDK does not?
+### How do I stop two buyers taking the same seat?
 
-The buyer SDK runs in the browser or mobile app and only **selects and holds** seats. This Go SDK
-runs on your trusted server and **inspects and books** them. Your secret key never reaches a buyer
-surface: browsers receive short-lived, origin-bound tokens minted here through
-`Sessions.CreateManageSession` or `Channels.CreateBuyerAccessSession`. Always price a sale from
-`Inventory.RetrieveHold`, never from values the browser sent you.
-
-### How do temporary seat holds work server-side?
-
-A hold reserves seats against concurrent buyers for a limited checkout window. From Go you
-retrieve it with `Inventory.RetrieveHold`, whose item-level price, quantity, and currency are
-authoritative, and confirm it with `Inventory.Book`. Use `Inventory.ExtendHold` for a long checkout
-instead of releasing and re-holding, which would hand the seats to whoever is racing for them.
-Booking is a single automatic attempt: after an unknown network outcome you may reconcile and
-repeat the exact same event, hold, and `BookingRef`; seats already booked under that reference are
-not sold again.
+In the SeatLayer picker, a buyer's seats are held when they go to checkout; with the headless `SeatingChart`, your page calls `hold()`. The hold keeps those seats for that buyer for a set time, which you can change
+per event, and every other buyer sees them taken. Your server reads the hold with
+`Inventory.RetrieveHold`, charges from the prices it returns rather than anything the browser sent,
+and books it; `Inventory.ExtendHold` gives a slow checkout more time without letting the seats go.
+If a booking call times out, check `Inventory.ListBookings` for that `BookingRef`, or repeat the exact same
+booking with the same hold and `BookingRef`: seats already booked under it are not sold again,
+though the repeat can return an empty booked list.
 
 ### Can I use my own payment provider?
 
@@ -583,6 +599,22 @@ you already use, then books the seats with your order id as `BookingRef`, and Se
 touches the money. If you would rather SeatLayer run the checkout for an event
 (`Events.ReplaceBuyerCheckout`), buyers pay through one of 14 payment gateways, including Stripe,
 PayPal and Square, straight into your own account.
+
+### How do I sell season tickets and renewals through an API?
+
+The season API is in this SDK: `client.Seasons` has all 90 season operations. You create a season
+from its dates with `Seasons.Create`, the buyer chooses one seat in the browser `SeasonPicker` and
+the season hold takes it on every date at once, and your server books it with `Seasons.BookHold`;
+for the next season, `Seasons.CreateRenewalOffers` offers each holder the same seat.
+`Seasons.SetAsideBlock` sets season seats aside on every date before sales open, and with your own
+checkout each season seat uses one SDK credit per date, like any other sold seat.
+
+### How do I use the Go SDK in a net/http server?
+
+Create one client with `seatlayer.New` at start-up and share it: `Client` is safe for concurrent
+use. Pass each request's `r.Context()` to every call, so a cancelled request stops retries at once.
+For webhooks, read the raw body with `io.ReadAll(r.Body)` and pass it to `seatlayer.VerifyWebhook`
+before any JSON decoding, because decoding and re-encoding changes the bytes.
 
 ## Continue your Go integration
 
@@ -600,6 +632,9 @@ PayPal and Square, straight into your own account.
   (`llms.txt`) for an agent-readable map of the documentation.
 - [Explore every SeatLayer SDK on GitHub](https://github.com/seatlayer)
   across web, mobile, and server.
+- [Season ticket API guide](https://seatlayer.io/guides/season-ticket-api/): build a season end to end.
+- [Box office](https://seatlayer.io/box-office/): sell at the counter from the same live seats.
+- [SDK and API overview](https://seatlayer.io/developers/) and [pricing](https://seatlayer.io/pricing/).
 
 ## SeatLayer SDK ecosystem
 
@@ -607,6 +642,8 @@ PayPal and Square, straight into your own account.
 |---|---|
 | JavaScript | [`@seatlayer/js`](https://www.npmjs.com/package/@seatlayer/js) |
 | React | [`@seatlayer/react`](https://www.npmjs.com/package/@seatlayer/react) |
+| Vue | [`@seatlayer/vue`](https://www.npmjs.com/package/@seatlayer/vue) |
+| Angular | [`@seatlayer/angular`](https://www.npmjs.com/package/@seatlayer/angular) |
 | React Native | [`@seatlayer/react-native`](https://www.npmjs.com/package/@seatlayer/react-native) |
 | iOS | [`seatlayer-ios`](https://github.com/seatlayer/seatlayer-ios) |
 | Flutter | [`seatlayer`](https://pub.dev/packages/seatlayer) |
@@ -619,6 +656,10 @@ PayPal and Square, straight into your own account.
 | .NET (server) | [`SeatLayer`](https://www.nuget.org/packages/SeatLayer) |
 | Java (server) | [`io.seatlayer:seatlayer-java`](https://central.sonatype.com/artifact/io.seatlayer/seatlayer-java) |
 | Go (server) | [`github.com/seatlayer/seatlayer-go`](https://pkg.go.dev/github.com/seatlayer/seatlayer-go) (this module) |
+
+## Scale evidence
+
+Benchmarked on public 100,000-, 150,000- and 200,000-seat venue fixtures on 15 September 2026: 200,000 seats chart-ready in 1.95 s, desktop, local production build. Tested at 10,000 simulated concurrent buyers on one 12,000-seat event (18 September 2026): engine-side hold latency p99 9 ms, zero server errors. Method, fixtures and run files: https://github.com/seatlayer/seatlayer-performance. Live 200,000-seat stadium demo: https://app.seatlayer.io/demo/play/century-stadium-200k.
 
 ## Development
 

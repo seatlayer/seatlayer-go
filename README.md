@@ -117,7 +117,7 @@ the `Nullable` overlay when the wire call must contain an explicit JSON null, fo
 Every method takes a `context.Context`. Cancelling it stops retries immediately rather than being
 treated as a transient fault to back off through.
 
-## Fixed Renewable Seasons
+## Season tickets (Fixed Renewable Seasons)
 
 `client.Seasons` has all 90 season operations: seasons and their packages, dates and package prices
 (per price type, with the `SeasonPriceType…` constants), sales windows, checkout tests, buyer
